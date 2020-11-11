@@ -142,32 +142,65 @@ function Get-Eszkoz
         }
         catch
         {
+            $eszkoz = $false
         }
+
         if(!$eszkoz)
         {
-            Write-Host "A megadott IP cím jelenleg nem elérhető! Add meg újra az IP címet!" -ForegroundColor Red
+            Write-Host "A megadott eszköz jelenleg nem elérhető! Add meg újra az IP címet, vagy nevet!" -ForegroundColor Red
+        }
+        else
+        {
+            if (!(IfIP $global:keresetteszkoz))
+            {
+                $global:keresetteszkoz = [System.Net.Dns]::GetHostAddresses($global:keresetteszkoz)
+            }
+
+            if($global:keresetteszkoz | Select-String -pattern "10.59.58")
+            {
+                $eszkoz = $false
+                Write-Host "A megadott eszköz másik VLAN-on van, így erről az eszközről nem lehet megkeresni!" -ForegroundColor Red
+            }
+            else
+            {
+                if(!($global:keresetteszkoz | Select-String -pattern $localIP))
+                {
+                    ping $global:keresetteszkoz -n 1 | Out-Null
+                    $getRemoteMAC = arp -a | ConvertFrom-String | Where-Object { $_.P2 -eq $global:keresetteszkoz }
+                    $kimenet = ($getRemoteMAC.P3).Split("-")
+                    $global:RemoteMAC = "$($kimenet[0])$($kimenet[1]).$($kimenet[2])$($kimenet[3]).$($kimenet[4])$($kimenet[5])"
+                }
+                else
+                {
+                    Write-Host "A jelenlegi és a keresett eszköz megegyezik! Adj meg másik eszközt!" -ForegroundColor Red
+                    $eszkoz = $false
+                }
+            }
         }
     } while (!$eszkoz)
-    
-    ping $global:keresetteszkoz -n 1 | Out-Null
-    if (!(IfIP $global:keresetteszkoz))
-    {
-        $global:keresetteszkoz = [System.Net.Dns]::GetHostAddresses($global:keresetteszkoz)
-    }
-    
-    $getRemoteMAC = arp -a | ConvertFrom-String | Where-Object { $_.P2 -eq $global:keresetteszkoz }
-    $kimenet = ($getRemoteMAC.P3).Split("-")
-    $global:RemoteMAC = "$($kimenet[0])$($kimenet[1]).$($kimenet[2])$($kimenet[3]).$($kimenet[4])$($kimenet[5])"
     $keresesiparancs = "traceroute mac $localMAC $remoteMAC"
     return $keresesiparancs
 }
 
+function Get-MACaddress {
+    param ($gepnev)
+    if (!$gepnev)
+    {
+        $gepnev = HOSTNAME.EXE
+    }
+    $getMAC = get-wmiobject -class "win32_networkadapterconfiguration" -ComputerName $gepnev | Where-Object {$_.DefaultIPGateway -Match "10.59."}
+    $kimenet = ($getMAC.MACAddress).Split(":")
+    $MAC = "$($kimenet[0])$($kimenet[1]).$($kimenet[2])$($kimenet[3]).$($kimenet[4])$($kimenet[5])"
+    $IP = (($getMAC.IPAddress).Split(","))[0]
+    $result = @($MAC, $IP)
+    return $result
+}
 
+$local = Get-MACaddress
+$LocalMAC = $local[0]
+$localIP = $local[1]
 $global:waittime = 500 
-$getLocalMAC = get-wmiobject -class "win32_networkadapterconfiguration" | Where-Object {$_.DefaultIPGateway -Match "10.59.56.1"}
-$kimenet = ($getLocalMAC.MACAddress).Split(":")
-$LocalMAC = "$($kimenet[0])$($kimenet[1]).$($kimenet[2])$($kimenet[3]).$($kimenet[4])$($kimenet[5])"
-$localIP = (($getLocalMAC.IPAddress).Split(","))[0]
+
 Write-Host "ESZKÖZ HELYKERESŐ`n"
 
 $keresesiparancs = Get-Eszkoz
@@ -182,7 +215,7 @@ if ($valassz -ne "I")
     do
     {
         Clear-Host
-        Write-Host "ESZKÖZ HELYKERESŐ`n"
+        Write-Host "ESZKÖZ FIZIKAI HELYÉNEK MEGKERESÉSE`n"
         if (!$elsofutas)
         {
             $keresesiparancs = Get-Eszkoz
@@ -209,13 +242,14 @@ if ($valassz -ne "I")
             {
                 $global:switch = "10.59.1.252"
             }
+            Write-Host $result
         }while (!$siker -and $failcount -lt $maxhiba)
         $global:waittime = $waittimeorig
         
         if($siker)
         {
             Clear-Host
-            Write-Host "ESZKÖZ HELYKERESŐ`n"
+            Write-Host "ESZKÖZ FIZIKAI HELYÉNEK MEGKERESÉSE`n"
             Write-Host "Az adatcsomagok útja erről az eszközről a(z) $keresetteszkoz IP című eszközig:"
             $talalat = 0
             $sortor = $result.Split("`r`n")
@@ -242,12 +276,11 @@ if ($valassz -ne "I")
 if($valassz -eq "I" -or $failcount -eq 3)
 {
     Clear-Host
-    Write-Host "ESZKÖZ HELYKERESŐ`n"
+    Write-Host "ESZKÖZ FIZIKAI HELYÉNEK MEGKERESÉSE`n"
     Write-Host "Helyi IP cím:           $localIP (ezt kell pingelni a switchről, ha a TraceRoute parancs 'Error: Source Mac address not found.' hibát ad."
     Write-Host "Keresett eszköz IP-je:  $keresetteszkoz (ezt kell pingelni a switchről, ha a TraceRoute parancs 'Error: Destination Mac address not found.' hibát ad."
     Write-Host "Keresési parancs:       $keresesiparancs (automatikusan a vágólapra másolva)`n"
     Set-Clipboard $keresesiparancs
+    Write-Host "A folyamat végetért. Egy billentyű leütésére a program kilép."
+    Read-Host
 }
-
-Write-Host "A folyamat végetért. Egy billentyű leütésére a program kilép."
-Read-Host
