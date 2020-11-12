@@ -164,9 +164,10 @@ Class Eszkoz
         $this.Port = $port
     }
 
-    SetFelhasznalo($felhasznalo)
+    SetFelhasznalo()
     {
-        $this.Felhasznalo = $felhasznalo
+        $this.Felhasznalo = Get-UtolsoUser $this.Eszkoznev
+        #$this.Felhasznalo = $felhasznalo
     }
 }
 
@@ -367,7 +368,7 @@ Class Remote
         {
             $message = "A(z) $($this.IPaddress) eszköz jelenleg nem elérhető"
             Add-Log "[ESZKOZ OFFLINE] $message"
-            Write-Host "$message! Add meg újra az IP címet, vagy nevet!" -ForegroundColor Red
+            Write-Host "$message!" -ForegroundColor Red
         }
         return $this.Online
     }
@@ -551,6 +552,7 @@ Class Lekerdezes
         $eszkoz.SetPort($this.eszkozport)
         $eszkoz.SetIP($script:remote.IPaddress)
         $eszkoz.SetMAC($script:remote.MACaddress)
+        $eszkoz.SetFelhasznalo()
     }
 
     Log()
@@ -622,6 +624,44 @@ Class Import
     }
 }
 
+function Get-Valasztas
+{
+## This function is responsible to check if users entered one of the allowed choices
+    param($choice) # It receives an array of the possible choices, it's not fixed, so it doesn't matter if we have 2 allowed choices, or 30
+    $probalkozottmar = $false
+    #Write-Host $choice #For debug purposes
+    do
+    {        
+        if ($probalkozottmar -eq $false) # Here the user enters their choice, if it's their first try
+        {
+            $valasztas = Read-Host -Prompt "Válassz"
+        }
+        else
+        {
+            Write-Host "`n`nKérlek csak a megadott lehetőségek közül válassz!" -ForegroundColor Yellow # This is the error message, the user gets here after every single bad entry
+            $valasztas = Read-Host -Prompt "Válassz"
+        }
+        $teszt = $false
+        for ($i=0; $i -lt $choice.Length; $i++) # This loop checks if the user entered an allowed value
+        {
+            if ($valasztas -eq $choice[$i])
+            {
+                $teszt = $true
+                break # To get out of the loop if there's a match
+            }
+            $probalkozottmar = $true
+        }
+    } while ($teszt -ne $true)
+    return $valasztas
+}
+
+function Get-YesNo
+{
+    Write-Host "(I) Igen`n(N) Nem"
+    $confirm = Valaszt ("I", "N")
+    return $confirm    
+}
+
 function Get-IPRange
 {
     param ($elsoIP, $utolsoIP)
@@ -685,6 +725,31 @@ function Get-IPRange
     return $eszkoz
 }
 
+# Ez a függvény kérdezi le egy online számítógép esetében a jelenleg bejelentkezett
+# user felhasználónevét.
+function Get-UtolsoUser
+{
+    param ($gepnev)
+    
+    try
+    {
+        $utolsouserfull = (Get-WmiObject -Class win32_computersystem -ComputerName $gepnev).Username # Bekérjük a user felhasználónevét
+        $utolsouser = $utolsouserfull.Split("\") # A név STN\bejelenkezési név formátumban jön. Ezt szétbontjuk, hogy megkapjuk a bejelentkezési nevet
+        $user = Get-ADUser $utolsouser[1] # A bejelentkezési névvel lekérjük a felhasználó adatait
+        return $user.Name # A felhasználó megjelenő nevét adjuk vissza eredményként
+    }
+    
+    catch [System.Runtime.InteropServices.COMException]
+    {
+        return "Felhasználónév lekérése megtagadva!"
+    }
+
+    catch
+    {
+        return "Nincs bejelentkezett felhasználó"
+    }
+}
+
 function Get-IPcount
 {
     param ($elsoIP, $utolsoIP)
@@ -735,14 +800,8 @@ function Import-IPaddresses
         {
             Write-Host "A megadott tartományban $ipdarab darab IP cím található. Egészen biztos vagy benne, hogy ennyi eszközt szeretnél egyszerre lekérdezni?`nAz összes cím lekérdezése hosszú időt vehet igénybe!" -ForegroundColor Yellow
             Write-Host "Amennyiben mégis szeretnéd a lekérdezést futtatni, üss I betűt, amennyiben más tartományt adnál meg, üss N betűt!"
-            do
-            {
-                $valassz = Read-Host -Prompt "Válassz"
-                if(($valassz -ne "I") -and ($valassz -ne "N"))
-                {
-                    Write-Host "Kérlek csak a megadott lehetőségek közül válassz!" -ForegroundColor Yellow
-                }
-            }while(($valassz -ne "I") -and ($valassz -ne "N"))
+            $valassz = Get-YesNo
+
             if($valassz -eq "N")
             {
                 $endloop = $false
@@ -1048,16 +1107,16 @@ function Set-Settings
     } while ($valasztas -ne "K")
 
     Write-Host "Szeretnéd menteni a beállításokat, hogy legközelebb is ezeket használja a program?"
-    Write-Host "Üss I-t, ha igen, bármely más billentyű leütésére a program csak a mostani futás során használja a változtatásokat."
-    $valasztas = Read-Host -Prompt "Választ"
+    Write-Host "Üss I-t, ha igen, N-t, ha nem."
+    $valasztas = Get-YesNo
 
     if($valasztas -eq "I")
     {
-        Set-Settings
+        Write-Settings
     }
 }
 
-function Set-Settings {
+function Write-Settings {
     "nevgyujtes = $global:nevgyujtes" | Out-File .\config.ini
     "log = $global:log" | Out-File .\config.ini -Append
     "debug = $global:debug" | Out-File .\config.ini -Append
@@ -1075,6 +1134,10 @@ function Get-EgyszeriLekerdezes
         if($script:remote.Elerheto())
         {
             $global:keresesiparancs = [Parancs]::HibaJavitassal($remote)
+        }
+        else
+        {
+            Write-Host "Add meg újra az IP címet, vagy nevet!" -ForegroundColor Red
         }
     }while(!$global:keresesiparancs -or !$script:remote.Elerheto())
 }
@@ -1223,14 +1286,7 @@ Write-Host "(1) Egy eszköz lekérdezése"
 Write-Host "(2) Eszköz lekérdezéséhez szükséges parancs vágólapra másolása"
 Write-Host "(3) Egy OU minden számítógépének lekérdezése, és fájlba mentése"
 Write-Host "(4) Egy IP cím tartomány minden számítógépének lekérdezése, és fájlba mentése"
-$valassz = Read-Host -Prompt "Válassz"
-do
-{
-    if (($valassz -ne 1) -and ($valassz -ne 2) -and ($valassz -ne 3) -and ($valassz -ne 4))
-    {
-        Write-Host "Nem a megadott lehetőségek közül választottál! Kérlek próbáld újra!" -ForegroundColor Red
-    }
-}while(($valassz -ne 1) -and ($valassz -ne 2) -and ($valassz -ne 3) -and ($valassz -ne 4))
+$valassz = Get-Valasztas ("1", "2", "3", "4")
 
 switch ($valassz) {
     1 { Set-Kiiratas }
