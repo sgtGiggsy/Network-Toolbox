@@ -39,53 +39,21 @@ if ($konfighiba)
     $setting = [Setting]::New()
 }
 
-
-
 switch ($confighiba) {
     1 { Add-Log "[HIBA] A konfigurációs fájlban hibás érték(ek) szerepel(nek)!" }
     2 { Add-Log "[HIBA] A konfigurációs fájl hiányzik, vagy sérült!" }
     Default {}
 }
 
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+#-#-#                                     OSZTÁLYOK                                           #-#-#
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+
 #####
 ##
-##  Osztályok. Ebben a részben találhatóak a programban használt osztályok
+##  Segítő osztályok. Ebben a részben találhatóak a részfeladatokat végző osztályok
 ##
 #####
-
-class IPcim
-{
-    $tag1
-    $tag2
-    $tag3
-    $tag4
-    $pattern = "^([1-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])(\.([0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])){3}$"
-
-    IPcim($bemenet)
-    {
-        $kimenet = $false
-        do
-        {
-            if($bemenet -match $this.pattern)
-            {
-                $kimenet = $bemenet.Split(".")
-                [int32]$this.tag1 = $kimenet[0]
-                [int32]$this.tag2 = $kimenet[1]
-                [int32]$this.tag3 = $kimenet[2]
-                [int32]$this.tag4 = $kimenet[3]
-            }
-            else
-            {
-                Write-Host "Nem érvényes IP címet adtál meg! Próbálkozz újra!" -ForegroundColor Red
-                $bemenet = Read-Host -Prompt "IP cím"
-            }
-        }while (!($kimenet))
-    }
-    [string]ToString()
-    {
-        return "$($this.tag1).$($this.tag2).$($this.tag3).$($this.tag4)"
-    }
-}
 
 Class Setting
 {
@@ -95,7 +63,6 @@ Class Setting
     static $port = 23
     static [int32]$waittime = 500
     static [int32]$maxhiba = 2
-    static $gateway = "10.59."
     static $frissitomappanev = "HKR tudakozó"
     static $csvnevelotag = "Geplista"
     static $aktivnapok = 180
@@ -105,6 +72,31 @@ Class Setting
 
     }
 }
+
+Class Time
+{
+    $filetime
+
+    Time()
+    {
+        [string]$this.filetime = Get-Date -Format "yyyyMMdd_HHmm"
+    }
+    Static [String]Stamp()
+    {
+        Return Get-Date -Format "yyyy.MM.dd HH:mm"
+    }
+
+    [String]FileName()
+    {
+        Return $this.filetime
+    }
+}
+
+#####
+##
+##  Objektumok. Ebben a részben találhatóak a kezelendő objektumokhoz készített osztályok
+##
+#####
 
 Class Eszkoz
 {
@@ -167,168 +159,29 @@ Class Eszkoz
     SetFelhasznalo()
     {
         $this.Felhasznalo = Get-UtolsoUser $this.Eszkoznev
-        #$this.Felhasznalo = $felhasznalo
-    }
-}
-
-Class Telnet
-{
-    Static Login()
-    {
-        $login = $false
-        do
-        {
-            [Telnet]::SetSwitch()
-            Clear-Host
-            Write-Host "Bejelentkezés a $([Setting]::switch) switchre`n"
-            [Telnet]::LoginCreds()
-            $login = [Telnet]::TestConnection()
-
-            if (!$login)
-            {
-                Write-Host "Újrapróbálkozol a switch bejelentkezési adatainak megadásával? Üss I-t, ha igen, bármely más billentyű esetén a program kilép" -ForegroundColor Red
-                $valassz = Read-Host -Prompt "Válassz"
-                if($valassz -ne "I")
-                {
-                    Exit
-                }
-            }
-        }while(!$login)
-    }
-
-    Static SetConnection($switch, $felhasznalonev, $jelszo)
-    {
-        [Setting]::switch = $switch
-        $script:felhasznalonev = $felhasznalonev
-        $script:jelszo = $jelszo
-    }
-
-    Static LoginCreds()
-    {
-        $script:felhasznalonev = Read-Host -Prompt "Felhasználónév"
-        $pwd = Read-Host -AsSecureString -Prompt "Jelszó"
-        $script:jelszo = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($pwd))
-    }
-
-    Static SetSwitch()
-    {
-        Clear-Host
-        Write-Host "Switch bejelentkezés`n"
-        Write-Host "Az alapértelmezett switchet használod ($([Setting]::switch)), vagy megadod kézzel a címet?`nAdd meg a switch IP címét, ha választani szeretnél, vagy üss Entert, ha az alapértelmezettet használnád!"
-        do
-        {
-            $kilep = $true
-            $valassz = Read-Host "A switch IP címe"
-            if ($valassz)
-            {
-                if (!(Test-Ping $valassz))
-                {
-                    $message = "A(z) $valassz IP címen nem található eszköz"
-                    Add-Log "[SWITCH ELÉRHETETLEN] $message"
-                    Write-Host "$message, add meg újra a címet, vagy üss Entert az alapértelmezett switch használatához!" -ForegroundColor Red
-                    $kilep = $false
-                }
-                if($kilep)
-                {
-                    [Setting]::switch = $valassz
-                }
-            }
-        }while(!$kilep)
-    }
-
-    Static [bool]TestConnection()
-    {
-        $login = $false
-        Write-Host "`nKísérlet csatlakozásra..."
-        $waittimeorig = [Setting]::waittime
-        $logintest = [Telnet]::InvokeCommands("")
-        $login = $logintest | Select-String -Pattern "#"
-        if (!$login -or !$logintest)
-        {
-            $message = "A megadott felhasználónév: $($script:felhasznalonev), vagy a hozzá tartozó jelszó nem megfelelő, esetleg a(z) $([Setting]::switch) címen nincs elérhető switch"
-            Add-Log "[SWITCH KAPCSOLÓDÁSI HIBA] $message"
-            Write-Host "$message!" -ForegroundColor Red
-            $login = $false
-        }
-        else
-        {
-            Add-Log "[SWITCH SIKERES KAPCSOLÓDÁS] A(z) $($script:felhasznalonev) sikeresen kapcsolódott a(z) $([Setting]::switch) switchez"
-            $login = $true
-        }
-        return $login
-    }
-
-    Static [Object]InvokeCommands($parancsok)
-    {
-        $socket = $false
-        $result = ""
-        [String[]]$commands = @($script:felhasznalonev, $script:jelszo)
-    
-        foreach ($parancs in $parancsok)
-        {
-            $commands += $parancs
-        }
-    
-        try
-        {
-            $socket = New-Object System.Net.Sockets.TcpClient([Setting]::switch, [Setting]::port)
-        }
-        catch
-        {
-            $result = $false
-        }
-    
-        if($socket)
-        {
-            $stream = $socket.GetStream()
-            $writer = New-Object System.IO.StreamWriter($stream)
-            $buffer = New-Object System.Byte[] 1024
-            $encoding = New-Object System.Text.ASCIIEncoding
-
-            $waittime = [Setting]::waittime
-
-            foreach ($command in $commands)
-            {
-                $writer.WriteLine($command)
-                $writer.Flush()
-                Start-Sleep -Milliseconds $waittime
-            }
-    
-            Start-Sleep -Milliseconds $waittime
-    
-            while($stream.DataAvailable)
-            {
-                $read = $Stream.read($buffer, 0, 1024)
-                $result += ($encoding.GetString($buffer, 0, $read))
-            }
-        }
-        else
-        {
-            $result = $false
-        }
-    
-        return $result
     }
 }
 
 Class Local
 {
-    [string]$Gepnev
     [string]$IPaddress
     [string]$MACaddress
+    [string]$Mask
 
     Local()
     {
-        $getMAC = get-wmiobject -class "win32_networkadapterconfiguration" | Where-Object {$_.DefaultIPGateway -Match [Setting]::gateway}
+        $gateway = (Get-NetRoute -DestinationPrefix "0.0.0.0/0").NextHop
+        $getMAC = get-wmiobject -class "win32_networkadapterconfiguration" | Where-Object {$_.DefaultIPGateway -Match $gateway}
         $kimenet = ($getMAC.MACAddress).Split(":")
         $this.MACaddress = "$($kimenet[0])$($kimenet[1]).$($kimenet[2])$($kimenet[3]).$($kimenet[4])$($kimenet[5])"
         $this.IPaddress = (($getMAC.IPAddress).Split(","))[0]
+        $This.Mask = (Get-NetIPAddress | Where-Object {$_.IPAddress -match $getMAC.IPAddress[0]}).PrefixLength
     }
 }
 
 Class Remote
 {
-    [string]$Gepnev
+    [string]$Eszkoznev
     [string]$IPaddress
     [string]$MACaddress
     $Online
@@ -377,11 +230,11 @@ Class Remote
     {
         if(!($this.IPaddress -match [Setting]::IPpattern))
         {
-            $this.Gepnev = $this.IPaddress
+            $this.Eszkoznev = $this.IPaddress
             $addresses = [System.Net.Dns]::GetHostAddresses($this.IPaddress)
             foreach ($address in $addresses)
             {
-                if ($address -match [Setting]::gateway)
+                if ($address -match [Setting]::IPpattern)
                 {
                     $this.IPaddress = $address
                     Break
@@ -408,6 +261,190 @@ Class Remote
     }
 }
 
+class IPcim
+{
+    $tag1
+    $tag2
+    $tag3
+    $tag4
+    $pattern = "^([1-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])(\.([0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])){3}$"
+
+    IPcim($bemenet)
+    {
+        $kimenet = $false
+        do
+        {
+            if($bemenet -match $this.pattern)
+            {
+                $kimenet = $bemenet.Split(".")
+                [int32]$this.tag1 = $kimenet[0]
+                [int32]$this.tag2 = $kimenet[1]
+                [int32]$this.tag3 = $kimenet[2]
+                [int32]$this.tag4 = $kimenet[3]
+            }
+            else
+            {
+                Write-Host "Nem érvényes IP címet adtál meg! Próbálkozz újra!" -ForegroundColor Red
+                $bemenet = Read-Host -Prompt "IP cím"
+            }
+        }while (!($kimenet))
+    }
+    [string]ToString()
+    {
+        return "$($this.tag1).$($this.tag2).$($this.tag3).$($this.tag4)"
+    }
+}
+
+#####
+##
+##  Végrehajtó osztályok. Ebben a részben találhatóak az olyan osztályok,
+##  amik valamilyen feladat elvégzésére lettek létrehozva
+##
+#####
+
+Class Telnet
+{
+    Static $felhasznalonev = $false
+    Static $jelszo = $false
+    Static Login()
+    {
+        if (![Telnet]::felhasznalonev -or ![Telnet]::jelszo)
+            {
+            $login = $false
+            do
+            {
+                [Telnet]::SetSwitch()
+                Show-Cimsor "Bejelentkezés a $([Setting]::switch) switchre"
+                [Telnet]::LoginCreds()
+                $login = [Telnet]::TestConnection()
+
+                if (!$login)
+                {
+                    Write-Host "Újrapróbálkozol a switch bejelentkezési adatainak megadásával? Üss I-t, ha igen, és N-t, ha inkább kilépnél a programból" -ForegroundColor Red
+                    $valassz = Get-YesNo
+                    if($valassz -ne "I")
+                    {
+                        Exit
+                    }
+                }
+            }while(!$login)
+        }
+    }
+
+    Static SetConnection($switch, $felhasznalonev, $jelszo)
+    {
+        [Setting]::switch = $switch
+        [Telnet]::felhasznalonev = $felhasznalonev
+        [Telnet]::jelszo = $jelszo
+    }
+
+    Static LoginCreds()
+    {
+        [Telnet]::felhasznalonev = Read-Host -Prompt "Felhasználónév"
+        $pass = Read-Host -AsSecureString -Prompt "Jelszó"
+        [Telnet]::jelszo = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($pass))
+    }
+
+    Static SetSwitch()
+    {
+        Show-Cimsor "SWITCH BEJELENTKEZÉS"
+        Write-Host "Az alapértelmezett switchet használod ($([Setting]::switch)), vagy megadod kézzel a címet?`nAdd meg a switch IP címét, ha választani szeretnél, vagy üss Entert, ha az alapértelmezettet használnád!"
+        do
+        {
+            $kilep = $true
+            $valassz = Read-Host "A switch IP címe"
+            if ($valassz)
+            {
+                if (!(Test-Ping $valassz))
+                {
+                    $message = "A(z) $valassz IP címen nem található eszköz"
+                    Add-Log "[SWITCH ELÉRHETETLEN] $message"
+                    Write-Host "$message, add meg újra a címet, vagy üss Entert az alapértelmezett switch használatához!" -ForegroundColor Red
+                    $kilep = $false
+                }
+                if($kilep)
+                {
+                    [Setting]::switch = $valassz
+                }
+            }
+        }while(!$kilep)
+    }
+
+    Static [bool]TestConnection()
+    {
+        $login = $false
+        Write-Host "`nKísérlet csatlakozásra..."
+        $waittimeorig = [Setting]::waittime
+        $logintest = [Telnet]::InvokeCommands("")
+        $login = $logintest | Select-String -Pattern "#"
+        if (!$login -or !$logintest)
+        {
+            $message = "A megadott felhasználónév: $([Telnet]::felhasznalonev), vagy a hozzá tartozó jelszó nem megfelelő, esetleg a(z) $([Setting]::switch) címen nincs elérhető switch"
+            Add-Log "[SWITCH KAPCSOLÓDÁSI HIBA] $message"
+            Write-Host "$message!" -ForegroundColor Red
+            $login = $false
+        }
+        else
+        {
+            Add-Log "[SWITCH SIKERES KAPCSOLÓDÁS] A(z) $([Telnet]::felhasznalonev) sikeresen kapcsolódott a(z) $([Setting]::switch) switchez"
+            $login = $true
+        }
+        return $login
+    }
+
+    Static [Object]InvokeCommands($parancsok)
+    {
+        $socket = $false
+        $result = ""
+        [String[]]$commands = @([Telnet]::felhasznalonev, [Telnet]::jelszo)
+    
+        foreach ($parancs in $parancsok)
+        {
+            $commands += $parancs
+        }
+    
+        try
+        {
+            $socket = New-Object System.Net.Sockets.TcpClient([Setting]::switch, [Setting]::port)
+        }
+        catch
+        {
+            $result = $false
+        }
+    
+        if($socket)
+        {
+            $stream = $socket.GetStream()
+            $writer = New-Object System.IO.StreamWriter($stream)
+            $buffer = New-Object System.Byte[] 1024
+            $encoding = New-Object System.Text.ASCIIEncoding
+
+            $waittime = [Setting]::waittime
+
+            foreach ($command in $commands)
+            {
+                $writer.WriteLine($command)
+                $writer.Flush()
+                Start-Sleep -Milliseconds $waittime
+            }
+    
+            Start-Sleep -Milliseconds $waittime
+    
+            while($stream.DataAvailable)
+            {
+                $read = $Stream.read($buffer, 0, 1024)
+                $result += ($encoding.GetString($buffer, 0, $read))
+            }
+        }
+        else
+        {
+            $result = $false
+        }
+    
+        return $result
+    }
+}
+
 Class Parancs
 {
     Static [Object]HibaJavitassal($remote)
@@ -426,11 +463,11 @@ Class Parancs
     
     Static [Object]Elkeszit($remote)
     {
-        if($remote.IPaddress | Select-String -pattern "10.59.58")
+        if(!(Test-IfSameSubnet $script:local.IPaddress $remote.IPaddress $script:local.Mask))
         {
             $result = $false
             $message = "A(z) $($remote.IPaddress) IP című eszköz a jelenlegitől eltérő VLAN-ban található"
-            Add-Log "[VLAN ÁTJÁRÓ HIBA] $message"
+            Add-Log "[VLAN ÁTJÁRÁS HIBA] $message"
             Write-Host "$message, így erről az eszközről nem lehet megkeresni!" -ForegroundColor Red
         }
         else
@@ -538,8 +575,7 @@ Class Lekerdezes
                 $consolout += "$sor`n"
             }
         }
-        Clear-Host
-        Write-Host "ESZKÖZ FIZIKAI HELYÉNEK MEGKERESÉSE`n"
+        Show-Cimsor "ESZKÖZ FIZIKAI HELYÉNEK MEGKERESÉSE"
         Write-Host "Az adatcsomagok útja erről az eszközről a(z) $($script:remote.IPaddress) IP című eszközig:"
         Write-Host $consolout
         Write-Host "A keresett eszköz a(z) $($this.switchnev) $($this.switchip) switch $($this.eszkozport) portján található." -ForegroundColor Green
@@ -563,25 +599,6 @@ Class Lekerdezes
     [bool]Siker()
     {
         return $this.sikeres
-    }
-}
-
-Class Time
-{
-    $filetime
-
-    Time()
-    {
-        [string]$this.filetime = Get-Date -Format "yyyy-MM-dd"
-    }
-    Static [String]Stamp()
-    {
-        Return Get-Date -Format "yyyy.MM.dd HH:mm"
-    }
-
-    [String]FileName()
-    {
-        Return $this.filetime
     }
 }
 
@@ -624,6 +641,15 @@ Class Import
     }
 }
 
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+#-#-#                                    FÜGGVÉNYEK                                           #-#-#
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+
+#####
+##
+##  Menü kezelést könnyítő függvények
+##
+#####
 function Get-Valasztas
 {
 ## This function is responsible to check if users entered one of the allowed choices
@@ -638,7 +664,7 @@ function Get-Valasztas
         }
         else
         {
-            Write-Host "`n`nKérlek csak a megadott lehetőségek közül válassz!" -ForegroundColor Yellow # This is the error message, the user gets here after every single bad entry
+            Write-Host "Kérlek csak a megadott lehetőségek közül válassz!" -ForegroundColor Yellow # This is the error message, the user gets here after every single bad entry
             $valasztas = Read-Host -Prompt "Válassz"
         }
         $teszt = $false
@@ -658,8 +684,326 @@ function Get-Valasztas
 function Get-YesNo
 {
     Write-Host "(I) Igen`n(N) Nem"
-    $confirm = Valaszt ("I", "N")
+    $confirm = Get-Valasztas ("I", "N")
     return $confirm    
+}
+
+function Get-TrueFalse
+{
+    param($ertek)
+
+    if ($ertek -eq 1)
+    {
+        Write-Host "Bekapcsolva" -ForegroundColor Green
+    }
+    else
+    {
+        Write-Host "Kikapcsolva" -ForegroundColor Red
+    }
+}
+
+function Show-Cimsor
+{
+    param($almenu)
+    Clear-Host
+    Write-Host "HÁLÓZATKEZELÉSI SVÁJCIBICSKA`n`n$almenu`n`n"
+}
+
+#####
+##
+##  Egyszerűbb függvények egyetlen egyszerűbb feladat ellátására
+##
+#####
+
+# Ez a függvény kérdezi le egy online számítógép esetében a jelenleg bejelentkezett
+# user felhasználónevét.
+function Get-UtolsoUser
+{
+    param ($gepnev)
+    
+    try
+    {
+        $utolsouserfull = (Get-WmiObject -Class win32_computersystem -ComputerName $gepnev).Username # Bekérjük a user felhasználónevét
+        $utolsouser = $utolsouserfull.Split("\") # A név STN\bejelenkezési név formátumban jön. Ezt szétbontjuk, hogy megkapjuk a bejelentkezési nevet
+        $user = Get-ADUser $utolsouser[1] # A bejelentkezési névvel lekérjük a felhasználó adatait
+        return $user.Name # A felhasználó megjelenő nevét adjuk vissza eredményként
+    }
+    
+    catch [System.Runtime.InteropServices.COMException]
+    {
+        return "Felhasználónév lekérése megtagadva!"
+    }
+
+    catch
+    {
+        return "Nincs bejelentkezett felhasználó"
+    }
+}
+
+function Get-NameByIP
+{
+    param ($IPaddress)
+    try
+    {
+        $namesplit = ([System.Net.DNS]::GetHostEntry($IPaddress)).HostName
+        $kimenet = $namesplit.Split(".")
+        $name = $kimenet[0]
+    }
+    catch [System.Net.Sockets.SocketException]
+    {
+        $name = "Nem elérhető"
+    }
+
+    return $name
+}
+
+function Get-IPcount
+{
+    param ($elsoIP, $utolsoIP)
+        
+    $elsotag = $utolsoIP.tag1 - $elsoIP.tag1 + 1
+    $masodiktag = (256 - $elsoIP.tag2) + ($utolsoIP.tag2+1) + ((($elsotag - 2) * 256))
+    $harmadiktag = (256 - $elsoIP.tag3) + ($utolsoIP.tag3+1) + ((($masodiktag - 2) * 256))
+    $negyediktag = (256 - $elsoIP.tag4) + ($utolsoIP.tag4+1) + ((($harmadiktag - 2) * 256))
+
+    return $negyediktag
+}
+
+function Test-Ping
+{
+    param ($ipcim)
+
+    $ping = New-Object System.Net.NetworkInformation.Ping
+    if (!$script:pingoptions)
+    {
+        $script:pingoptions = New-Object System.Net.NetworkInformation.PingOptions
+        $script:pingoptions.TTL = 64
+        $script:pingoptions.DontFragment = $true
+    }
+    try
+    {
+        $reply = $ping.Send($ipcim,20,16,$script:pingoptions)
+    }
+    catch {
+    }
+
+    if ($reply.status -eq "Success")
+    {
+        return $true
+    }
+    else
+    {
+        return $false
+    }
+}
+Function Test-CSV
+{
+    Param($kozeptag)
+    $script:csvnev = "$csvnevelotag-$kozeptag.csv"
+    $script:oldcsvnev = "$csvnevelotag-$kozeptag-OLD.csv"
+    $script:csv = ".\Logfiles\$script:csvnev"
+    $script:oldcsv = ".\Logfiles\$script:oldcsvnev"
+    $script:csvsave = $script:csv
+
+    if (Test-Path $script:oldcsv)
+    {
+        if (Test-Path $script:csv)
+        {
+            [string]$leallasideje = (((Get-ChildItem -Path ".\Logfiles" -Filter $script:csvnev -Force).LastWriteTime)).ToString("yyyy.MM.dd HH.mm")
+            # Erre az ellenőrzésre azért van szükség, hogy egy véletlenül letörölt CSV fájl ne akassza ki a program működését
+            Remove-Item -Path $script:csv
+        }
+        Add-Log "[FIGYELMEZTETÉS] A program utolsó futása váratlan véget ért: $leallasideje-kor"
+        $script:csv = $script:oldcsv
+        Return $true
+    }
+    elseif (Test-Path $script:csv)
+    {
+        Return $true
+    }
+    else
+    {
+        Return $false
+    }
+}
+
+function Test-IfSameSubnet
+{
+    param($local, $remote, $subnet)
+
+    $masktag = [Math]::truncate(($subnet - 1) / 8)
+    $local = (($local).Split("."))[$masktag]
+    $remote = (($remote).Split("."))[$masktag]
+    $subnetsize = (($masktag + 1) * 8) - $subnet
+    $samesubnet = $false
+    if ($subnetsize -eq 0)
+    {
+        if ($local -eq $remote)
+        {
+            $samesubnet = $true
+        }
+    }
+    else
+    {
+        if ($subnetsize -eq 1)
+        {
+            $subnetsize = 2
+        }
+        else
+        {
+            $subnetsize = [Math]::Pow(2, $subnetsize)
+        }
+        $subnetstart = $local - ($local % $subnetsize)
+        $subnetend = $subnetstart + $subnetsize
+        if($remote -ge $subnetstart -and $remote -lt $subnetend)
+        {
+            $samesubnet = $true
+        }
+    }
+    return $samesubnet
+}
+
+function Add-Log
+{
+    param ($logtext)
+
+    if($config.log -ne "0") # A config.ini log bejegyzését 0-ra állítva a logolás kikapcsolható
+    {
+        $logtext | Out-File $script:logfajl -Append -Force -Encoding unicode
+    }
+}
+
+function Set-Logname
+{
+    param($logname)
+
+    $script:logfajl = ".\Logfiles\$logname.log"
+}
+
+function Write-Settings
+{
+    "nevgyujtes = $global:nevgyujtes" | Out-File .\config.ini
+    "log = $global:log" | Out-File .\config.ini -Append
+    "debug = $global:debug" | Out-File .\config.ini -Append
+    "debugip1 = $global:debugip1" | Out-File .\config.ini -Append
+    "debugip2 = $global:debugip2" | Out-File .\config.ini -Append
+    "logonline = $global:logonline" | Out-File .\config.ini -Append
+    "logoffline = $global:logoffline" | Out-File .\config.ini -Append
+    "method = $global:method" | Out-File .\config.ini -Append
+}
+
+# Ezt a függvényt egy másik programomból emeltem át (amelyet a GitHubra is feltöltöttem),
+# így a kommentek angolul vannak benne.
+# A feladata, hogy a normál könyvtárjellegű OU nevet lefordítsa a tartományon belüli
+# kereséshez használt distinguishedname formátumra.
+function Get-DistinguishedName
+{
+    param($bemenet) #OU name in the form you can find it in ADUC
+    $kimenet = $bemenet.Split("/") #Splitting the OU name by slash characters
+    
+    for ($i = $kimenet.Length-1; $i -gt -1; $i--) #Loop starts from the last section of the string array to put them to the front
+    {
+        if ($i -ne 0) #Do the conversion until we get to the DC part
+        {
+            if ($i -eq $kimenet.Length-1) # This conditional is used to get the OU name from the whole path, so we can use it as as folder, or filename
+            {
+                $Script:ounev = $kimenet[$i]
+            }
+            $forditott += "OU="+ $kimenet[$i]+","
+        }
+        else #Here's where we turn DC name into DistinguishedName format too
+        {
+            $dcnevold = $kimenet[$i]
+            $dcnevtemp = $dcnevold.Split(".")
+            for ($j = 0; $j -lt $dcnevtemp.Length; $j++)
+            {
+                if ($j -lt $dcnevtemp.Length-1) #It's needed so there won't be a comma at the end of the output
+                    {
+                        $dcnev += "DC="+$dcnevtemp[$j]+","
+                    }
+                else 
+                    {
+                        $dcnev += "DC="+$dcnevtemp[$j]
+                    }    
+            }
+            $forditott += $dcnev
+        }
+    }    
+    return $forditott #OU name in DistinguishedName form
+}
+
+function Get-EgyszeriLekerdezes
+{
+    $script:local = [Local]::New()
+    do
+    {
+        $script:remote = [Remote]::New()
+        if($script:remote.Elerheto())
+        {
+            $global:keresesiparancs = [Parancs]::HibaJavitassal($remote)
+        }
+        else
+        {
+            Write-Host "Add meg újra az IP címet, vagy nevet!" -ForegroundColor Red
+        }
+    }while(!$global:keresesiparancs -or !$script:remote.Elerheto())
+}
+
+#####
+##
+##  Összetett kisegítőfüggvények. Ezek a függvényeket összetettebb,
+##  vagy akár egyszerr több feladatokat látnak el
+##
+#####
+
+# Hasonlóan az Get-DistinguishedName függvényhez, ez is egy másik programból származik
+# Ennek a függvénynek az a feladata, hogy ellenőrzötten bekérje a lekérdezni kívánt OU elérési útját
+function Set-OU
+{
+    param($bemenet)
+    $eredetiou = $bemenet
+    $time = (Get-Date).Adddays(-([Setting]::aktivnapok)) # Csak azokkal foglalkozunk, amik a megadott időn belül voltak bekapcsolva
+    do 
+    {
+        if(!($bemenet)) # Ez az elágazás csak az első (sikertelen) futást követően lép életbe
+        {
+            Write-Host "FIGYELMEZTETÉS! A megadott OU nem létezik, vagy nem tartalmaz a kritériumnak megfelelő számítógépeket!" -ForegroundColor Red
+            Write-Host "Adj meg egy helyes elérési utat."
+            $eredetiou = Read-Host -Prompt "Elérési út"
+        }
+
+        $bemenet = $true
+        if($eredetiou) # Ebbe az elágazásba akkor lépünk be, ha beírtunk bármit az előző elágazás során
+        {
+            $ou = Get-DistinguishedName $eredetiou
+            $script:usecsv = Test-CSV $Script:ounev # Teszteljük, hogy korábban futtatuk-e már az adott OU-n ugyanezt a folyamatot
+            if(!($script:usecsv))
+            {
+                try
+                {
+                    Write-Host "A lekérdezett OU méretétől függően ez akár 30-40 másodpercet is igénybe vehet"
+                    $geplista = Get-ADComputer -Filter {LastLogonTimeStamp -gt $time} -SearchBase $ou
+                }
+                catch
+                {
+                    $bemenet = $false # Ha a géplistát nemlétező OU-ból kérnénk le, úgy ezt a kivételt kapjuk
+                }
+                if($geplista.Length -eq 0) # Ebbe az elágazásba akkor lépünk, ha az OU-ban nincsenek gépek
+                {
+                    $bemenet = $false
+                }
+            }
+        }
+    }while(!($bemenet))
+
+    if($eredetiou)
+    {
+        return $geplista
+    }
+    else
+    {
+        return $false
+    }
 }
 
 function Get-IPRange
@@ -725,50 +1069,12 @@ function Get-IPRange
     return $eszkoz
 }
 
-# Ez a függvény kérdezi le egy online számítógép esetében a jelenleg bejelentkezett
-# user felhasználónevét.
-function Get-UtolsoUser
-{
-    param ($gepnev)
-    
-    try
-    {
-        $utolsouserfull = (Get-WmiObject -Class win32_computersystem -ComputerName $gepnev).Username # Bekérjük a user felhasználónevét
-        $utolsouser = $utolsouserfull.Split("\") # A név STN\bejelenkezési név formátumban jön. Ezt szétbontjuk, hogy megkapjuk a bejelentkezési nevet
-        $user = Get-ADUser $utolsouser[1] # A bejelentkezési névvel lekérjük a felhasználó adatait
-        return $user.Name # A felhasználó megjelenő nevét adjuk vissza eredményként
-    }
-    
-    catch [System.Runtime.InteropServices.COMException]
-    {
-        return "Felhasználónév lekérése megtagadva!"
-    }
-
-    catch
-    {
-        return "Nincs bejelentkezett felhasználó"
-    }
-}
-
-function Get-IPcount
-{
-    param ($elsoIP, $utolsoIP)
-        
-    $elsotag = $utolsoIP.tag1 - $elsoIP.tag1 + 1
-    $masodiktag = (256 - $elsoIP.tag2) + ($utolsoIP.tag2+1) + ((($elsotag - 2) * 256))
-    $harmadiktag = (256 - $elsoIP.tag3) + ($utolsoIP.tag3+1) + ((($masodiktag - 2) * 256))
-    $negyediktag = (256 - $elsoIP.tag4) + ($utolsoIP.tag4+1) + ((($harmadiktag - 2) * 256))
-
-    return $negyediktag
-}
-
 function Import-IPaddresses
 {
     do
     {
         $endloop = $true
-        Clear-Host
-        Write-Host "IP TARTOMÁNY ELLENŐRZŐ`n"
+        Show-Cimsor "IP TARTOMÁNY ELLENŐRZŐ"
         if ($debug -ne 1)
         {
             Write-Host "Kérlek add meg a lekérdezni kívánt IP tartomány első IP címét"
@@ -813,350 +1119,16 @@ function Import-IPaddresses
     return $eszkozok
 }
 
-function Get-IPaddressesState
-{
-    $eszkozok = Import-IPaddresses
-    $filetime = Get-Date -Format "yyyyMMddHHmm"
-    $csvnev = "IP_Címlista_$($elsoIP.ToString())-$($utolsoIP.ToString())_$($filetime).csv"
-
-    Clear-Host
-    Write-Host "A(Z) $($elsoIP.ToString()) - $($utolsoIP.ToString()) IP TARTOMÁNY LEKÉRDEZÉSE`n"
-
-    foreach ($eszkoz in $eszkozok)
-    {
-        Write-Host "$($eszkoz.IPaddress) kapcsolatának ellenőrzése" -NoNewline
-        switch ($method)
-        {
-            1 { $online = Test-Ping $eszkoz.IPaddress }
-            2 { $online = (Test-Connection $eszkoz.IPaddress -Quiet -Count 1) }
-            Default{ $online = Test-Ping $eszkoz.IPaddress }
-        }
-
-        $eszkoz.Online = $online
-        $name = ""
-        $neve = ""
-        if($online -and ($nevgyujtes -eq 1))
-        {
-            try
-            {
-                $namesplit = ([System.Net.DNS]::GetHostEntry($eszkoz.IPaddress)).HostName
-                $kimenet = $namesplit.Split(".")
-                $name = $kimenet[0]
-            }
-            catch [System.Net.Sockets.SocketException]
-            {
-                $name = "Nem elérhető"
-            }
-
-            $neve = "; Neve: $name"
-        }
-
-        if($nevgyujtes -eq 1)
-        {
-            $eszkoz.Gepnev($name)
-        }
-
-        $eszkoz.Online = $eszkoz.EszkozAllapot()
-        Write-Host "`r$($eszkoz.IPaddress): Állapota: $($eszkoz.Online)$neve                  "
-        $logtime = Get-Date -Format "yyyy.MM.dd HH:mm"
-        Add-Log "[ESZKÖZ ÁLLAPOT] $($eszkoz.IPaddress): Állapota: $($eszkoz.Online)$neve Idő: $logtime"
-        if(($logonline -eq 1) -and ($logoffline -eq 1))
-        {
-            $eszkoz | export-csv -encoding UTF8 -path ".\Logfiles\$csvnev" -NoTypeInformation -Append -Force -Delimiter ";"
-        }
-        elseif(($logonline -eq 1) -and $online)
-        {
-            $eszkoz | export-csv -encoding UTF8 -path ".\Logfiles\$csvnev" -NoTypeInformation -Append -Force -Delimiter ";"
-        }
-        elseif(($logoffline -eq 1) -and !$online)
-        {
-            $eszkoz | export-csv -encoding UTF8 -path ".\Logfiles\$csvnev" -NoTypeInformation -Append -Force -Delimiter ";"
-        }
-    }
-}
-
-function Get-TrueFalse
-{
-    param($ertek)
-
-    if ($ertek -eq 1)
-    {
-        Write-Host "Bekapcsolva" -ForegroundColor Green
-    }
-    else
-    {
-        Write-Host "Kikapcsolva" -ForegroundColor Red
-    }
-}
-
-
-function Test-Ping {
-    param ($ipcim)
-
-    $ping = New-Object System.Net.NetworkInformation.Ping
-    if (!$script:pingoptions)
-    {
-        $script:pingoptions = New-Object System.Net.NetworkInformation.PingOptions
-        $script:pingoptions.TTL = 64
-        $script:pingoptions.DontFragment = $true
-    }
-    try
-    {
-        $reply = $ping.Send($ipcim,20,16,$script:pingoptions)
-    }
-    catch {
-    }
-
-    if ($reply.status -eq "Success")
-    {
-        return $true
-    }
-    else
-    {
-        return $false
-    }
-}
-
-# Ezt a függvényt egy másik programomból emeltem át (amelyet a GitHubra is feltöltöttem),
-# így a kommentek angolul vannak benne.
-# A feladata, hogy a normál könyvtárjellegű OU nevet lefordítsa a tartományon belüli
-# kereséshez használt distinguishedname formátumra.
-function Get-DistinguishedName
-{
-    param($bemenet) #OU name in the form you can find it in ADUC
-    $kimenet = $bemenet.Split("/") #Splitting the OU name by slash characters
-    
-    for ($i = $kimenet.Length-1; $i -gt -1; $i--) #Loop starts from the last section of the string array to put them to the front
-    {
-        if ($i -ne 0) #Do the conversion until we get to the DC part
-        {
-            if ($i -eq $kimenet.Length-1) # This conditional is used to get the OU name from the whole path, so we can use it as as folder, or filename
-            {
-                $Script:ounev = $kimenet[$i]
-            }
-            $forditott += "OU="+ $kimenet[$i]+","
-        }
-        else #Here's where we turn DC name into DistinguishedName format too
-        {
-            $dcnevold = $kimenet[$i]
-            $dcnevtemp = $dcnevold.Split(".")
-            for ($j = 0; $j -lt $dcnevtemp.Length; $j++)
-            {
-                if ($j -lt $dcnevtemp.Length-1) #It's needed so there won't be a comma at the end of the output
-                    {
-                        $dcnev += "DC="+$dcnevtemp[$j]+","
-                    }
-                else 
-                    {
-                        $dcnev += "DC="+$dcnevtemp[$j]
-                    }    
-            }
-            $forditott += $dcnev
-        }
-    }    
-    return $forditott #OU name in DistinguishedName form
-}
-
-# Hasonlóan az OUnevfordito függvényhez, ez is egy másik programból származik
-# Ennek a függvénynek az a feladata, hogy ellenőrzötten bekérje a lekérdezni kívánt OU elérési útját
-function Set-OU
-{
-    param($bemenet)
-    $eredetiou = $bemenet
-    $time = (Get-Date).Adddays(-([Setting]::aktivnapok)) # Csak azokkal foglalkozunk, amik a megadott időn belül voltak bekapcsolva
-    do 
-    {
-        if(!($bemenet)) # Ez az elágazás csak az első (sikertelen) futást követően lép életbe
-        {
-            Write-Host "FIGYELMEZTETÉS! A megadott OU nem létezik, vagy nem tartalmaz a kritériumnak megfelelő számítógépeket!" -ForegroundColor Red
-            Write-Host "A mellékelt CSV fájl használatához üss Entert, amennyiben pedig másik OU-t használnál, add meg az elérési útját."
-            $eredetiou = Read-Host -Prompt "Elérési út"
-        }
-
-        $bemenet = $true
-        if($eredetiou) # Ebbe az elágazásba akkor lépünk be, ha beírtunk bármit az előző elágazás során
-        {
-            $ou = Get-DistinguishedName $eredetiou
-            $script:usecsv = Test-CSV $Script:ounev # Teszteljük, hogy korábban futtatuk-e már az adott OU-n ugyanezt a folyamatot
-            if(!($script:usecsv))
-            {
-                try
-                {
-                    $geplista = Get-ADComputer -Filter {LastLogonTimeStamp -gt $time} -SearchBase $ou
-                }
-                catch
-                {
-                    $bemenet = $false # Ha a géplistát nemlétező OU-ból kérnénk le, úgy ezt a kivételt kapjuk
-                }
-                if($geplista.Length -eq 0) # Ebbe az elágazásba akkor lépünk, ha az OU-ban nincsenek gépek
-                {
-                    $bemenet = $false
-                }
-            }
-        }
-    }while(!($bemenet))
-
-    if($eredetiou)
-    {
-        return $geplista
-    }
-    else
-    {
-        return $false
-    }
-}
-
-Function Test-CSV
-{
-    Param($kozeptag)
-    $script:csvnev = "$csvnevelotag-$kozeptag.csv"
-    $script:oldcsvnev = "$csvnevelotag-$kozeptag-OLD.csv"
-    $script:csv = ".\Logfiles\$script:csvnev"
-    $script:oldcsv = ".\Logfiles\$script:oldcsvnev"
-    $script:csvsave = $script:csv
-
-    if (Test-Path $script:oldcsv)
-    {
-        if (Test-Path $script:csv)
-        {
-            [string]$leallasideje = (((Get-ChildItem -Path ".\Logfiles" -Filter $script:csvnev -Force).LastWriteTime)).ToString("yyyy.MM.dd HH.mm")
-            # Erre az ellenőrzésre azért van szükség, hogy egy véletlenül letörölt CSV fájl ne akassza ki a program működését
-            Remove-Item -Path $script:csv
-        }
-        Add-Log "[FIGYELMEZTETÉS] A program utolsó futása váratlan véget ért: $leallasideje-kor"
-        $script:csv = $script:oldcsv
-        Return $true
-    }
-    elseif (Test-Path $script:csv)
-    {
-        Return $true
-    }
-    else
-    {
-        Return $false
-    }
-}
-
-function Add-Log {
-    param ($logtext)
-
-    if($config.log -ne "0") # A config.ini log bejegyzését 0-ra állítva a logolás kikapcsolható
-    {
-        $logtext | Out-File ".\Logfiles\IP-cim.log" -Append -Force -Encoding unicode
-    }
-}
-
-function Set-Settings
-{
-    do
-    {
-        Clear-Host
-        Write-Host "IP TARTOMÁNY ELLENŐRZŐ`n`nBEÁLLÍTÁSOK"
-
-        $csvsavemode = 0
-        if (($logonline -eq 1) -and ($logoffline -eq 1))
-        {
-            $optlogonline = "Az Online és Offline gépek is mentésre kerülnek"
-            $csvsavemode = 1
-        }
-        elseif (($logonline -eq 1) -and ($logoffline -eq 0))
-        {
-            $optlogonline = "Csak az Online gépek kerülnek mentésre"
-            $csvsavemode = 2
-        }
-        elseif (($logonline -eq 0) -and ($logoffline -eq 1))
-        {
-            $optlogonline = "Csak az Offline gépek kerülnek mentésre"
-            $csvsavemode = 3
-        }
-        else
-        {
-            $optlogonline = "Az eredmények nem kerülnek mentésre"
-            $csvsavemode = 0
-        }
-
-        if ($method -eq 2)
-        {
-            $optmethod = "Sokkal lassabb, de valamivel megbízhatóbb"
-        }
-        else
-        {
-            $optmethod = "Gyors, de néha ad fals negatív eredményt"
-        }
-
-        Write-Host "(1) Az online eszközök nevének gyűjtése (bizonyos esetekben jelentősen lassíthatja a folyamatot): " -NoNewline
-        Get-TrueFalse $nevgyujtes
-        Write-Host "(2) Debug mód: " -NoNewline
-        Get-TrueFalse $debug
-        Write-Host "(3) Minden eredmény logolása: " -NoNewline
-        Get-TrueFalse $log
-        Write-Host "(4) A folyamat során készülő CSV fájlba: $optlogonline"
-        Write-Host "(5) A lekérdezés módja: $optmethod"
-        Write-Host "A beállítások megváltoztatásához használd a mellettük látható számbillentyűket, a folyamatban lévő továbblépéshez üsd le a K betűt!"
-        $valasztas = Read-Host -Prompt "Valassz"
-
-        switch ($valasztas)
-        {
-            1 { if ($nevgyujtes -eq 1) { $global:nevgyujtes = 0} else { $global:nevgyujtes = 1} }
-            2 { if ($debug -eq 1) { $global:debug = 0} else { $global:debug = 1} }
-            3 { if ($log -eq 1) { $global:log = 0} else { $global:log = 1} }
-            4 { if ($csvsavemode -lt 3) { $csvsavemode++ } else { $csvsavemode = 0 } switch ($csvsavemode) { 1 { $global:logonline = 1; $global:logoffline = 1 } 2 { $global:logonline = 1; $global:logoffline = 0 } 3 { $global:logonline = 0; $global:logoffline = 1 } 0 { $global:logonline = 0; $global:logoffline = 0 }}}
-            5 { if ($method -eq 1) { $global:method = 2} else { $global:method = 1} }
-            default {}
-        }
-    } while ($valasztas -ne "K")
-
-    Write-Host "Szeretnéd menteni a beállításokat, hogy legközelebb is ezeket használja a program?"
-    Write-Host "Üss I-t, ha igen, N-t, ha nem."
-    $valasztas = Get-YesNo
-
-    if($valasztas -eq "I")
-    {
-        Write-Settings
-    }
-}
-
-function Write-Settings {
-    "nevgyujtes = $global:nevgyujtes" | Out-File .\config.ini
-    "log = $global:log" | Out-File .\config.ini -Append
-    "debug = $global:debug" | Out-File .\config.ini -Append
-    "debugip1 = $global:debugip1" | Out-File .\config.ini -Append
-    "debugip2 = $global:debugip2" | Out-File .\config.ini -Append
-    "logonline = $global:logonline" | Out-File .\config.ini -Append
-    "logoffline = $global:logoffline" | Out-File .\config.ini -Append
-    "method = $global:method" | Out-File .\config.ini -Append
-}
-function Get-EgyszeriLekerdezes
-{
-    do
-    {
-        $script:remote = [Remote]::New()
-        if($script:remote.Elerheto())
-        {
-            $global:keresesiparancs = [Parancs]::HibaJavitassal($remote)
-        }
-        else
-        {
-            Write-Host "Add meg újra az IP címet, vagy nevet!" -ForegroundColor Red
-        }
-    }while(!$global:keresesiparancs -or !$script:remote.Elerheto())
-}
-
-function Set-ParancsKiiratas
-{
-    Get-EgyszeriLekerdezes
-    Clear-Host
-    Write-Host "ESZKÖZ FIZIKAI HELYÉNEK MEGKERESÉSE`n"
-    Write-Host "Helyi IP cím:           $($script:local.IPaddress) (ezt kell pingelni a switchről, ha a TraceRoute parancs 'Error: Source Mac address not found.' hibát ad."
-    Write-Host "Keresett eszköz IP-je:  $($script:remote.IPaddress) (ezt kell pingelni a switchről, ha a TraceRoute parancs 'Error: Destination Mac address not found.' hibát ad."
-    Write-Host "Keresési parancs:       $global:keresesiparancs (automatikusan a vágólapra másolva)`n"
-    Set-Clipboard $global:keresesiparancs
-    Write-Host "A folyamat végetért. Egy billentyű leütésére a program kilép."
-    Read-Host
-}
+#####
+##
+##  Menüpontok. Ezeket a függvényeket hívják meg közvetlenül a főmenü menüpontjai
+##
+#####
 
 function Set-Kiiratas
 {
+    Show-Cimsor "EGYETLEN ESZKÖZ MEGKERESÉSE"
+    Set-Logname "EszkozHely"
     Get-EgyszeriLekerdezes
     [Telnet]::Login()
     $lekerdezes = [Lekerdezes]::New($global:keresesiparancs)
@@ -1166,29 +1138,35 @@ function Set-Kiiratas
         $lekerdezes.Kiirat()
     }
 }
-
+function Set-ParancsKiiratas
+{
+    Show-Cimsor "EGYETLEN ESZKÖZ MEGKERESÉSE"
+    Set-Logname "EszkozHely"
+    Get-EgyszeriLekerdezes
+    Write-Host "Helyi IP cím:           $($script:local.IPaddress) (ezt kell pingelni a switchről, ha a TraceRoute parancs 'Error: Source Mac address not found.' hibát ad."
+    Write-Host "Keresett eszköz IP-je:  $($script:remote.IPaddress) (ezt kell pingelni a switchről, ha a TraceRoute parancs 'Error: Destination Mac address not found.' hibát ad."
+    Write-Host "Keresési parancs:       $global:keresesiparancs (automatikusan a vágólapra másolva)`n"
+    Set-Clipboard $global:keresesiparancs
+    Write-Host "A folyamat végetért. Egy billentyű leütésére a program kilép."
+    Read-Host
+}
 function Import-ADList
 {
+    Show-Cimsor "AD-BÓL VETT GÉPEK LISTÁJÁNAK LEKÉRDEZÉSE"
+    Set-Logname "EszkozHely"
+    $script:local = [Local]::New()
     $filetime = [Time]::New()
     $ADgeplista = $false
 
-    Clear-Host
     Write-Host "Kérlek szúrd be a lekérdezni kívánt OU elérési útját!"
-    do
+    $valaszt = Read-Host -Prompt "Válassz"
+    $ADgeplista = Set-OU $valaszt
+    if($ADgeplista)
     {
-        $valaszt = Read-Host -Prompt "Válassz"
-        $ADgeplista = Set-OU $valaszt
-        if($ADgeplista)
-        {
-            [Import]::AD($ADgeplista) # Meghívjuk az importáló osztály ADból imortálást végző statikus metódusát
-            Add-Log "[LEKÉRDEZÉS MEGKEZDVE] A(z) $($script:ounev) OU gépeinek helyének lekérdezése megkezdődött: $([Time]::Stamp())-kor"
-        }
-        else
-        {
-            Write-Host $adgeplista
-            Write-Host "Hibás OU-t adtál meg, vagy az OU-ban nincsenek számítógépek! Kérlek add meg a helyes OU elérési utat!" -ForegroundColor Red
-        }
-    }while(!$ADgeplista)
+        [Import]::AD($ADgeplista) # Meghívjuk az importáló osztály ADból imortálást végző statikus metódusát
+        Add-Log "[LEKÉRDEZÉS MEGKEZDVE] A(z) $($script:ounev) OU gépeinek helyének lekérdezése megkezdődött: $([Time]::Stamp())-kor"
+    }
+
     [Telnet]::Login()
 
     # Itt kezdődik a függvény munkaciklusa. Ezen belül történik a lekérdezést végző függvény meghívása
@@ -1274,24 +1252,155 @@ function Import-ADList
     }while ($script:elemszam -ne $keszdb) # Ha a lista és kész gépek elemszáma megegyezik, a futás végetért
     $message = "A(z) $($script.OUnev) OU számítógépeinek helyének lekérdezése sikeresen befejeződött $([Time]::Stamp())-kor"
     Add-Log "[FOLYAMAT VÉGE] $message"
-    Write-Host "$message`nA program egy billetnyű leütését követőe kilép."
+    Write-Host "$message`nA program egy billetnyű leütését követően kilép."
     Read-Host
 }
 
-$local = [Local]::New()
+function Get-IPaddressesState
+{
+    Show-Cimsor "IP TARTOMÁNY LEKÉRDEZÉSE"
+    Set-Logname "EszkozAllapot"
+    $eszkozok = Import-IPaddresses
+    $time = [Time]::New()
+    $csvnev = "IP_Címlista_$($elsoIP.ToString())-$($utolsoIP.ToString())_$($time.FileName()).csv"
 
-Write-Host "Eszközkereső`n"
-Write-Host "Válassz az alábbi menüpontok közül:"
-Write-Host "(1) Egy eszköz lekérdezése"
-Write-Host "(2) Eszköz lekérdezéséhez szükséges parancs vágólapra másolása"
-Write-Host "(3) Egy OU minden számítógépének lekérdezése, és fájlba mentése"
-Write-Host "(4) Egy IP cím tartomány minden számítógépének lekérdezése, és fájlba mentése"
-$valassz = Get-Valasztas ("1", "2", "3", "4")
+    Show-Cimsor "A(Z) $($elsoIP.ToString()) - $($utolsoIP.ToString()) IP TARTOMÁNY LEKÉRDEZÉSE"
 
-switch ($valassz) {
-    1 { Set-Kiiratas }
-    2 { Set-ParancsKiiratas }
-    3 { Import-ADList }
-    4 { Get-IPaddressesState }
-    Default {}
+    foreach ($eszkoz in $eszkozok)
+    {
+        Write-Host "$($eszkoz.IPaddress) kapcsolatának ellenőrzése" -NoNewline
+        switch ($method)
+        {
+            1 { $online = Test-Ping $eszkoz.IPaddress }
+            2 { $online = (Test-Connection $eszkoz.IPaddress -Quiet -Count 1) }
+            Default{ $online = Test-Ping $eszkoz.IPaddress }
+        }
+
+        $eszkoz.Online = $online
+        $name = ""
+        $neve = ""
+        if($online -and ($nevgyujtes -eq 1))
+        {
+            $name = Get-NameByIP $eszkoz.IPaddress
+            $neve = "; Neve: $name"
+            $eszkoz.Eszkoznev = $name
+        }
+
+        $eszkoz.Online = $eszkoz.EszkozAllapot()
+        Write-Host "`r$($eszkoz.IPaddress): Állapota: $($eszkoz.Online)$neve                  "
+        Add-Log "[ESZKÖZ ÁLLAPOT] $($eszkoz.IPaddress): Állapota: $($eszkoz.Online)$neve Idő: $([Time]::Stamp())"
+        if(($logonline -eq 1) -and ($logoffline -eq 1))
+        {
+            $eszkoz | export-csv -encoding UTF8 -path ".\Logfiles\$csvnev" -NoTypeInformation -Append -Force -Delimiter ";"
+        }
+        elseif(($logonline -eq 1) -and $online)
+        {
+            $eszkoz | export-csv -encoding UTF8 -path ".\Logfiles\$csvnev" -NoTypeInformation -Append -Force -Delimiter ";"
+        }
+        elseif(($logoffline -eq 1) -and !$online)
+        {
+            $eszkoz | export-csv -encoding UTF8 -path ".\Logfiles\$csvnev" -NoTypeInformation -Append -Force -Delimiter ";"
+        }
+    }
+}
+
+function Set-Settings
+{
+    do
+    {
+        Show-Cimsor "BEÁLLÍTÁSOK"
+
+        $csvsavemode = 0
+        if (($logonline -eq 1) -and ($logoffline -eq 1))
+        {
+            $optlogonline = "Az Online és Offline gépek is mentésre kerülnek"
+            $csvsavemode = 1
+        }
+        elseif (($logonline -eq 1) -and ($logoffline -eq 0))
+        {
+            $optlogonline = "Csak az Online gépek kerülnek mentésre"
+            $csvsavemode = 2
+        }
+        elseif (($logonline -eq 0) -and ($logoffline -eq 1))
+        {
+            $optlogonline = "Csak az Offline gépek kerülnek mentésre"
+            $csvsavemode = 3
+        }
+        else
+        {
+            $optlogonline = "Az eredmények nem kerülnek mentésre"
+            $csvsavemode = 0
+        }
+
+        if ($method -eq 2)
+        {
+            $optmethod = "Sokkal lassabb, de valamivel megbízhatóbb"
+        }
+        else
+        {
+            $optmethod = "Gyors, de néha ad fals negatív eredményt"
+        }
+
+        Write-Host "(1) Az online eszközök nevének gyűjtése (bizonyos esetekben jelentősen lassíthatja a folyamatot): " -NoNewline
+        Get-TrueFalse $nevgyujtes
+        Write-Host "(2) Debug mód: " -NoNewline
+        Get-TrueFalse $debug
+        Write-Host "(3) Minden eredmény logolása: " -NoNewline
+        Get-TrueFalse $log
+        Write-Host "(4) A folyamat során készülő CSV fájlba: $optlogonline"
+        Write-Host "(5) A lekérdezés módja: $optmethod"
+        Write-Host "(K) Beállítások véglegesítése"
+        Write-Host "A beállítások megváltoztatásához használd a mellettük látható számbillentyűket!"
+        $valasztas = Get-Valasztas ("1", "2", "3", "4", "5", "K")
+
+        switch ($valasztas)
+        {
+            1 { if ($nevgyujtes -eq 1) { $global:nevgyujtes = 0} else { $global:nevgyujtes = 1} }
+            2 { if ($debug -eq 1) { $global:debug = 0} else { $global:debug = 1} }
+            3 { if ($log -eq 1) { $global:log = 0} else { $global:log = 1} }
+            4 { if ($csvsavemode -lt 3) { $csvsavemode++ } else { $csvsavemode = 0 } switch ($csvsavemode) { 1 { $global:logonline = 1; $global:logoffline = 1 } 2 { $global:logonline = 1; $global:logoffline = 0 } 3 { $global:logonline = 0; $global:logoffline = 1 } 0 { $global:logonline = 0; $global:logoffline = 0 }}}
+            5 { if ($method -eq 1) { $global:method = 2} else { $global:method = 1} }
+            default {}
+        }
+    } while ($valasztas -ne "K")
+
+    Write-Host "Szeretnéd menteni a beállításokat, hogy legközelebb is ezeket használja a program?"
+    Write-Host "Üss I-t, ha igen, N-t, ha nem."
+    $valasztas = Get-YesNo
+
+    if($valasztas -eq "I")
+    {
+        Write-Settings
+    }
+}
+
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+#-#-#                                   BELÉPÉSI PONT                                         #-#-#
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+
+for(;;)
+{
+    Write-Host "HÁLÓZATKEZELÉSI SVÁJCIBICSKA`n"
+    Write-Host "Válassz az alábbi menüpontok közül:"
+    Write-Host "(1) Egy eszköz helyének megkeresése a hálózaton"
+    Write-Host "(2) Egy eszköz helyének megkereséséhez szükséges parancs vágólapra másolása"
+    Write-Host "(3) Egy OU minden számítógépe helyének lekérdezése, és fájlba mentése"
+    Write-Host "(4) Egy IP cím tartomány minden eszköze helyének lekérdezése, és fájlba mentése"
+    Write-Host "(5) Egy OU gépeinek végigpingelése, és az eredmény fájlba mentése"
+    Write-Host "(6) Egy IP cím tartomány végigpingelése, és az eredmény fájlba mentése"
+    Write-Host "(S) Beállítások"
+    Write-Host "(K) Kilépés"
+    $valassz = Get-Valasztas ("1", "2", "3", "4", "5", "6", "S", "K")
+
+    switch ($valassz) {
+        1 { Set-Kiiratas }
+        2 { Set-ParancsKiiratas }
+        3 { Import-ADList }
+        4 { Write-Host "A funkció megírása folyamatban" }
+        5 { Write-Host "A funkció megírása folyamatban" }
+        6 { Get-IPaddressesState }
+        S { Set-Settings }
+        K { Exit }
+        Default {}
+    }
 }
