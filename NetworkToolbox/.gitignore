@@ -1,0 +1,5 @@
+﻿.vscode
+Logfiles
+*.dll
+*.ico
+*.exe
