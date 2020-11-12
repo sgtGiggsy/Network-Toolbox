@@ -865,32 +865,45 @@ function Test-IfSameSubnet
     param($local, $remote, $subnet)
 
     $masktag = [Math]::truncate(($subnet - 1) / 8)
-    $local = (($local).Split("."))[$masktag]
-    $remote = (($remote).Split("."))[$masktag]
-    $subnetsize = (($masktag + 1) * 8) - $subnet
-    $samesubnet = $false
-    if ($subnetsize -eq 0)
+    $samesubnet = $true
+
+    for ($i = $masktag - 1; $i -ge 0; $i--)
     {
-        if ($local -eq $remote)
+        if ((($local).Split("."))[$i] -ne ((($remote).Split("."))[$i]))
         {
-            $samesubnet = $true
+            $samesubnet = $false
+            Break
         }
     }
-    else
+    if($samesubnet)
     {
-        if ($subnetsize -eq 1)
+        $local = (($local).Split("."))[$masktag]
+        $remote = (($remote).Split("."))[$masktag]
+        $subnetsize = (($masktag + 1) * 8) - $subnet
+        $samesubnet = $false
+        if ($subnetsize -eq 0)
         {
-            $subnetsize = 2
+            if ($local -eq $remote)
+            {
+                $samesubnet = $true
+            }
         }
         else
         {
-            $subnetsize = [Math]::Pow(2, $subnetsize)
-        }
-        $subnetstart = $local - ($local % $subnetsize)
-        $subnetend = $subnetstart + $subnetsize
-        if($remote -ge $subnetstart -and $remote -lt $subnetend)
-        {
-            $samesubnet = $true
+            if ($subnetsize -eq 1)
+            {
+                $subnetsize = 2
+            }
+            else
+            {
+                $subnetsize = [Math]::Pow(2, $subnetsize)
+            }
+            $subnetstart = $local - ($local % $subnetsize)
+            $subnetend = $subnetstart + $subnetsize
+            if($remote -ge $subnetstart -and $remote -lt $subnetend)
+            {
+                $samesubnet = $true
+            }
         }
     }
     return $samesubnet
@@ -1241,13 +1254,12 @@ function Import-ADList
                         $lekerdezes.Feldolgoz()
                         $lekerdezes.ObjektumKitolto($eszkoz[$i])
                         $eszkoz[$i].SetFelhasznalo()
-                        $keszdb++
                         $eszkoz[$i] | export-csv -encoding UTF8 -path $script:csvkimenet -NoTypeInformation -Append -Force -Delimiter ";"
+                        $keszdb++
                         $fail = $false
                     }
                     if ($sajateszkoz -and !$eszkoz[$sajateszkoz].SwitchIP)
                     {
-                        Write-Host "Feltöltöm a saját eszköz adatait is"
                         $eszkoz[$sajateszkoz].SetSwitchNev($script:local.SwitchNev)
                         $eszkoz[$sajateszkoz].SetSwitchIP($script:local.SwitchIP)
                         $eszkoz[$sajateszkoz].SetPort($script:local.Port)
@@ -1255,6 +1267,7 @@ function Import-ADList
                         $eszkoz[$sajateszkoz].SetMAC($script:local.MACaddress)
                         $eszkoz[$sajateszkoz].SetFelhasznalo()
                         $eszkoz[$sajateszkoz] | export-csv -encoding UTF8 -path $script:csvkimenet -NoTypeInformation -Append -Force -Delimiter ";"
+                        $keszdb++
                     }
                 }
             }
@@ -1284,6 +1297,7 @@ function Import-ADList
 
         # Ha nem vagyunk meg minden géppel, belépünk a késleltető ciklusba,
         # ami a fő ciklust pihenteti egy kicsit.
+        $ujraprobalkozas = 600
         if ($script:elemszam -ne $keszdb)
         {
             for ($i = 0; $i -lt $ujraprobalkozas; $i++)
