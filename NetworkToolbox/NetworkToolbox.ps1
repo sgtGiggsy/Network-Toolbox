@@ -5,6 +5,9 @@ if (!(Test-Path .\Logfiles))
     New-Item -Path . -Name "Logfiles" -ItemType "Directory" | Out-Null
 }
 
+$adminobj = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+$script:admin = $adminobj.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+
 # A rugalmasabb kezelésért a program külső, szerkeszthető INI fájllal paraméterezhető. Itt kérjük be
 # az INI fájlt, és amennyiben azzal valami hiba lenne, folytatjuk az alapértelmezett értékekkel
 try
@@ -62,7 +65,7 @@ Class Setting
     static $log = 1
     static $port = 23
     static [int32]$waittime = 500
-    static [int32]$maxhiba = 2
+    static [int32]$maxhiba = 4
     static $frissitomappanev = "HKR tudakozó"
     static $csvnevelotag = "Geplista"
     static $aktivnapok = 180
@@ -158,7 +161,10 @@ Class Eszkoz
 
     SetFelhasznalo()
     {
-        $this.Felhasznalo = Get-UtolsoUser $this.Eszkoznev
+        if($script:admin)
+        {
+            $this.Felhasznalo = Get-UtolsoUser $this.Eszkoznev
+        }
     }
 }
 
@@ -553,7 +559,7 @@ Class Lekerdezes
             {
                 $failcount++
                 $visszamaradt = [Setting]::maxhiba - $failcount
-                Write-Host "A(z) $($script:remote.IPaddress) eszköz helyének lekérdezés most nem járt sikerrel. Még $visszamaradt alkalommal újrapróbálkozom!" -ForegroundColor Yellow
+                Write-Host "A(z) $($script:remote.IPaddress) eszköz helyének lekérdezése most nem járt sikerrel. Még $visszamaradt alkalommal újrapróbálkozom!" -ForegroundColor Yellow
                 if ($failcount -eq [Setting]::maxhiba)
                 {
                     $message = "A(z) $($script:remote.IPaddress) eszköz helyének lekérdezése a(z) $([Setting]::switch) IP című switchről időtúllépés miatt nem sikerült"
@@ -763,6 +769,11 @@ function Get-UtolsoUser
     catch [System.Runtime.InteropServices.COMException]
     {
         return "Felhasználónév lekérése megtagadva!"
+    }
+
+    catch [System.UnauthorizedAccessException]
+    {
+        return "Nincs jogosultságod a felhasználó lekérésére!"
     }
 
     catch
@@ -1215,7 +1226,6 @@ function Import-ADList
         [Import]::AD($ADgeplista) # Meghívjuk az importáló osztály ADból imortálást végző statikus metódusát
         Add-Log "[LEKÉRDEZÉS MEGKEZDVE] A(z) $($script:ounev) OU gépeinek helyének lekérdezése megkezdődött: $([Time]::Stamp())-kor"
     }
-
     [Telnet]::Login()
 
     # Itt kezdődik a függvény munkaciklusa. Ezen belül történik a lekérdezést végző függvény meghívása
@@ -1254,7 +1264,10 @@ function Import-ADList
                         $lekerdezes.Feldolgoz()
                         $lekerdezes.ObjektumKitolto($eszkoz[$i])
                         $eszkoz[$i].SetFelhasznalo()
-                        $eszkoz[$i] | export-csv -encoding UTF8 -path $script:csvkimenet -NoTypeInformation -Append -Force -Delimiter ";"
+                        if(!(Select-String -Path $script:csvkimenet -Pattern $eszkoz[$i].Eszkoznev))
+                        {
+                            $eszkoz[$i] | export-csv -encoding UTF8 -path $script:csvkimenet -NoTypeInformation -Append -Force -Delimiter ";"
+                        }
                         $keszdb++
                         $fail = $false
                     }
@@ -1266,13 +1279,16 @@ function Import-ADList
                         $eszkoz[$sajateszkoz].SetIP($script:local.IPaddress)
                         $eszkoz[$sajateszkoz].SetMAC($script:local.MACaddress)
                         $eszkoz[$sajateszkoz].SetFelhasznalo()
-                        $eszkoz[$sajateszkoz] | export-csv -encoding UTF8 -path $script:csvkimenet -NoTypeInformation -Append -Force -Delimiter ";"
+                        if(!(Select-String -Path $script:csvkimenet -Pattern $eszkoz[$sajateszkoz].Eszkoznev))
+                        {
+                            $eszkoz[$sajateszkoz] | export-csv -encoding UTF8 -path $script:csvkimenet -NoTypeInformation -Append -Force -Delimiter ";"
+                        }
                         $keszdb++
                     }
                 }
             }
 
-            if($fail)
+            if($fail -and !($remote.Elerheto()))
             {
                 $eszkoz[$i] | export-csv -encoding UTF8 -path $script:csvsave -NoTypeInformation -Append -Force -Delimiter ";"
             }
@@ -1309,7 +1325,6 @@ function Import-ADList
             Write-Host "`r                                                                  "
             Write-Host "A FOLYAMAT FOLYTATÓDIK"
         }
-        Read-Host
     }while ($script:elemszam -ne $keszdb) # Ha a lista és kész gépek elemszáma megegyezik, a futás végetért
     $message = "A(z) $($script.OUnev) OU számítógépeinek helyének lekérdezése sikeresen befejeződött $([Time]::Stamp())-kor"
     Add-Log "[FOLYAMAT VÉGE] $message"
