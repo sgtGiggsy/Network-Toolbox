@@ -160,7 +160,14 @@ Class Eszkoz
 
     SetSwitchIP($switchIP)
     {
-        $this.SwitchIP = $switchIP.Trim("(", ")")
+        try
+        {
+            $this.SwitchIP = $switchIP.Trim("(", ")")
+        }
+        catch
+        {
+            $this.SwitchIP = "IP cím nem elérhető"
+        }
     }
 
     SetPort($port)
@@ -221,57 +228,78 @@ Class Remote
 
     Remote()
     {
-        $this.GetEszkoz()
+        $this.AdatBeker()
     }
 
     Remote($keresetteszkoz)
     {
-        $this.IPaddress = $keresetteszkoz
-        if($this.Allapot())
+        if($this.Allapot($keresetteszkoz))
         {
-            $this.IfIP()
+            $this.GetEszkoz($keresetteszkoz)
+            $this.GetIP($keresetteszkoz)
         }
     }
 
     Remote($keresetteszkoz, [bool]$dontcheck)
     {
-        $this.IPaddress = $keresetteszkoz
+        $this.GetEszkoz($keresetteszkoz)
     }
 
-    GetEszkoz()
+    AdatBeker()
     {
-        $this.IPaddress = Read-Host -Prompt "Keresett eszköz IP címe, vagy neve"
-        if($this.Allapot())
+        $keresetteszkoz = Read-Host -Prompt "Keresett eszköz IP címe, vagy neve"
+        if($this.Allapot($keresetteszkoz))
         {
-            $this.IfIP()
+            $this.GetEszkoz($keresetteszkoz)
+            $this.GetIP($keresetteszkoz)
         }
     }
 
-    [bool]Allapot()
+    GetEszkoz($keresetteszkoz)
     {
-        $this.Online = Test-Ping $this.IPaddress
+        if($this.IfIP($keresetteszkoz))
+        {
+            $this.IPaddress = $keresetteszkoz
+        }
+        else
+        {
+            $this.Eszkoznev = $keresetteszkoz
+        }
+    }
+
+    [bool]Allapot($keresetteszkoz)
+    {
+        $this.Online = Test-Ping $keresetteszkoz
         if(!$this.Online)
         {
-            $message = "A(z) $($this.IPaddress) eszköz jelenleg nem elérhető"
+            $message = "A(z) $keresetteszkoz eszköz jelenleg nem elérhető"
             Add-Log "[ESZKOZ OFFLINE] $message"
             Write-Host "$message!" -ForegroundColor Red
         }
         return $this.Online
     }
 
-    IfIP()
+    [Bool]IfIP($keresetteszkoz)
     {
-        if(!($this.IPaddress -match [Setting]::IPpattern))
+        if($keresetteszkoz -match [Setting]::IPpattern)
         {
-            $this.Eszkoznev = $this.IPaddress
-            $addresses = [System.Net.Dns]::GetHostAddresses($this.IPaddress)
-            foreach ($address in $addresses)
+            return $true
+        }
+        else
+        {
+            return $false
+        }
+    }
+
+    GetIP($hostname)
+    {
+        $addresses = [System.Net.Dns]::GetHostAddresses($hostname)
+        foreach ($address in $addresses)
+        {
+            if ($address -match [Setting]::IPpattern)
             {
-                if ($address -match [Setting]::IPpattern)
-                {
-                    $this.IPaddress = $address
-                    Break
-                }
+                $this.IPaddress = $address
+                Break
             }
         }
     }
@@ -488,7 +516,7 @@ Class Parancs
             $result = [Parancs]::Elkeszit($remote)
             if(!$result)
             {
-                $remote.GetEszkoz()
+                $remote.AdatBeker()
             }
         }while(!$result)
         return $result
@@ -1181,6 +1209,10 @@ function Import-IPaddresses
                 $script:elsokihagyott = New-Object IPcim($valassz)
                 Write-Host "Kérlek add meg az utolsó kihagyni kívánt IP címet!"
                 $script:utolsokihagyott = New-Object IPcim(Read-Host -Prompt "Utolsó kihagyott IP cím")
+            }
+            else
+            {
+                $script:elsokihagyott = $false
             }
         }
         else
