@@ -322,6 +322,40 @@ Class Remote
     }
 }
 
+## Remote osztállyal összevonás után törölni!!!
+class EllenorzendoGepek
+{
+    $GepNeve
+    $Elkeszult
+    $IPcim
+
+    EllenorzendoGepek($gepnev)
+    {
+        $this.gepneve = $gepnev
+        $this.elkeszult = $false
+    }
+
+    [string]Nev()
+    {
+        return $this.gepneve
+    }
+
+    SetKesz()
+    {
+        $this.elkeszult = $true
+    }
+    
+    [bool]Kesze()
+    {
+        return $this.elkeszult
+    }
+
+    SetIPcim($IPcim)
+    {
+        $this.IPcim = $IPcim
+    }
+}
+
 class IPcim
 {
     $tag1
@@ -1264,6 +1298,35 @@ function Import-IPaddresses
     return $eszkozok
 }
 
+## MEGÍRÁS ALATTI FÜGGVÉNY. NE HASZNÁLD!!!!
+function IPcimChecker {
+    param ($sorsz, $elemszam)
+    
+    $gepnev = $gep[$sorsz].Nev() # Az egyszerűbb kezelésért a metódus eredményét kitesszük egy stringbe
+    $ind = $sorsz + 1 # Erre azért van szükség, hogy a program helyesen jelezze, hányadik gépnél járunk
+    Write-Host "($ind/$elemszam)" -NoNewline
+    # Csak akkor kezdjük meg a gép ellenőrzését, ha online állapotban van, és méég nem lett leellenőrizve
+    if ((Test-Connection $gepnev -Quiet -Count 1) -and (!($gep[$sorsz].Kesze())))
+    {
+        # Erre a try-catch blokkra azért van szükség, mert "beragadnak" bejegyzések a DNS szerverbe
+        # így néha akkor is onlinenak jelez a rendszer egy gépet, ha a legutolsó ismert IP-jén talál.
+        # Ez azért okoz gondot, mert az adott helyet a hibás pingválasz ellenére nem lehet elérni,
+        # viszont a program mégis megpróbálja és ez kivételt dob.
+        $ipcim = (Test-Connection $gepnev -Count 1).IPV4Address
+        $gep[$sorsz].SetIPcim($ipcim)
+        $gep[$sorsz].SetKesz()
+        Log "[ONLINE] A(z) $gepnev számítógép online van, IP címe: $ipcim"
+        Write-Host "`rA(z) $gepnev számítógép online van, IP címe: $ipcim"
+        $gep[$sorsz] | export-csv -encoding UTF8 -path ".\Logfiles\IPlista.csv" -NoTypeInformation -Append -Force -Delimiter ";"
+
+    }
+    else
+    {
+        Log "[OFFLINE] A(z) $gepnev számítógép jelenleg nem érhető el"
+        Write-Host "`rA(z) $gepnev számítógép jelenleg nem érhető el"
+    }
+}
+
 #####
 ##
 ##  Menüpontok. Ezeket a függvényeket hívják meg közvetlenül a főmenü menüpontjai
@@ -1548,6 +1611,145 @@ function Get-IPaddressesState
     }
 }
 
+## MEGÍRÁS ALATTI FÜGGVÉNY. NE HASZNÁLD!!!
+function Get-ADcomputersState
+{
+    $vane = $false
+    do
+    {
+        do
+        {        
+            if($config.log -eq "0")
+            {
+                Write-Host "Figyelem logolás kikapcsolva!" -ForegroundColor Red
+            }
+    
+            # Mivel ez a változó csak akkor áll false állapotban, ha nem, vagy rosszul lett megadva az OU neve,
+            # így ennek állapotát ellenőrizve tudjuk biztosítani, hogy a program ne próbálja minden ciklus
+            # során bekérni az OU nevét.
+            if (!($vane))
+            {
+                $ellenorzendoOU = OUcheck
+                $vane = $true
+            }
+            Clear-Host
+            Write-Host "A(z) $($script:ounev) OU-ban található számítógépek IP címének ellenőrzése`n"
+            $csvnev = "GepLista-$($Script:ounev).csv"
+            $oldcsvnev = "GepLista-$($Script:ounev)-OLD.csv"
+            $csv = ".\Logfiles\$csvnev"
+            $oldcsv = ".\Logfiles\$oldcsvnev"
+            $csvsave = ".\Logfiles\$csvnev"
+    
+            # Ha ciklus ezen pontján létezik a régebbi verzió a nem elérhető gépeket tartalmazó fájlból,
+            # az azt jelenti, hogy a legutolsó ciklus félbeszakadt. Ilyenkor a legutolsó ciklus eredményét
+            # törli a rendszer, és az eggyel korábbit használva indítja el a ciklust 
+            if (Test-Path $oldcsv)
+            {
+                if (Test-Path $csv)
+                {
+                    # Erre az ellenőrzésre azért van szükség, hogy egy véletlenül letörölt CSV fájl ne akassza ki a program működését
+                    Remove-Item -Path $csv
+                }
+                $csv = $oldcsv
+            }
+    
+            # Ha létezik az adott OU nem elérhető gépeit tartalmazó lista, úgy a ciklus már egyszer lefutott,
+            # tehát ha nem a fájlt használnánk, tehát a fájl tartalmát kell használnunk,
+            # máskülönben a program nem tudna egy félbeszakadt folyamatot folytatni
+            $csvletezik = Test-Path $csv
+            if ($csvletezik)
+            {
+                $csvdata = Import-Csv -Path $csv -Delimiter ";"
+                $elemszam = $csvdata.Length
+                $gep = New-Object 'object[]' $elemszam
+                for ($i=0; $i -lt $elemszam; $i++)
+                {
+                    $gep[$i] = [EllenorzendoGepek]::New($csvdata[$i].Gepneve)
+                }
+    
+                if($csv -ne $oldcsv)
+                {
+                    Rename-Item -Path $csv -NewName $oldcsvnev
+    
+                }
+            }
+            else
+            {
+                if (!($config.aktivnapok)) # Ha nem adunk meg értéket a konfig fájlban, úgy az érték itt 180 nap
+                {
+                    $time = (Get-Date).Adddays(-180)
+                }
+                else
+                {
+                    $time = (Get-Date).Adddays(-($config.aktivnapok))
+                }
+                
+                $geplista = Get-ADComputer -Filter {LastLogonTimeStamp -gt $time} -SearchBase $ellenorzendoOU
+                $elemszam = $geplista.Length
+                if($elemszam -eq 0)
+                {
+                    Write-Host "A megadott OU-ban nincsenek számítógépek`n" -ForegroundColor Red
+                    $vane = $false                        
+                }
+                else
+                {
+                    $logtime = get-date -Format "yyyy.MM.dd HH:mm"
+                    Log "[FOLYAMAT MEGKEZDŐDÖTT] A(z) $($script:ounev) OU számítógépeinek ellenőrzése megkezdődött $logtime-kor"
+                    $gep = New-Object 'object[]' $elemszam
+                    for($i = 0; $i -lt $elemszam; $i++)
+                    {
+                        $gep[$i] = [EllenorzendoGepek]::New($geplista[$i].Name)
+                        # A geplista-OUnev-OLD csv fájlba azonnal kitett gép objektumokkal biztosíthatjuk, hogy ha az első ellenőrzés során a program le is állna,
+                        # a következő futáskor ne terheljük az AD-t a gépek újboli lekérdezésével.
+                        $gep[$i] | export-csv -encoding UTF8 -path $oldcsv -NoTypeInformation -Append -Force -Delimiter ";"
+                    }
+                }
+            }
+        } while (!($vane))
+    
+        # Ez a ciklus hívja meg egyenként minden $gep objektumra a TMAllapotEllenorzo függvényt
+        for($i = 0; $i -lt $elemszam; $i++)
+        {
+            IPcimChecker $i $elemszam
+            # Ha a gép elkeszult attribútuma false állapotban van, úgy kitesszük a csv fájlba,
+            # és a legközelebbi futásakor a program már csak az ilyen gépekkel foglalkozik
+            
+            if(!($gep[$i].Kesze()))
+            {
+                $gep[$i] | export-csv -encoding UTF8 -path $csvsave -NoTypeInformation -Append -Force -Delimiter ";"
+            }
+        }
+    
+        # Ha létezik korábbi futásból visszamaradt elérhetetlen gépek listáját tartalmazó CSV fájl,
+        # úgy azt itt töröljük. Ezzel biztosítjuk, hogy a következő ciklus elején a program tudja,
+        # az utolsó ciklus rendben végigfutott.
+        if (Test-Path $oldcsv)
+        {
+            Remove-Item -Path $oldcsv
+        }
+    
+        Clear-Host
+        Write-Host "A(z) $($script:ounev) OU-ban található számítógépek IP címének ellenőrzése`n"
+    
+        # Nem biztos, hogy szükséges, de talán célszerű az előző futás során keletkező
+        # objektumokat töröltetni a PowerShell szemétgyűjtőjével
+        [system.gc]::Collect()
+        
+        # Itt a program futása nyugovóra tér a konfig fájlban megadott időre.
+        for ($i = 0; $i -lt $config.ujraprobalkozas; $i++)
+        {
+            $remaining = $config.ujraprobalkozas - $i
+            Write-Host "`rA(z) $($script:ounev) OU számítógépein az IP címek begyűjtése folytatódik $remaining másodperc múlva.      " -NoNewline
+            Start-Sleep -s 1
+        }
+    } while ($elemszam -gt 0)
+    
+    $logtime = get-date -Format "yyyy.MM.dd HH:mm"
+    Log "[FOLYAMAT VÉGE] A(z) $($script:ounev) OU összes számítógépének ellenőrzése befejeződött $logtime-kor"
+    Write-Host "A(z) $($script:ounev) OU összes számítógépének ellenőrzése a végéhez ért.`nA program egy billentyű leütését követően kilép."
+    Read-Host    
+}
+
 function Set-Settings
 {
     do
@@ -1641,7 +1843,7 @@ for(;;)
         2 { Set-ParancsKiiratas }
         3 { Import-ADList }
         4 { Import-IPRange }
-        5 { Write-Host "A funkció megírása folyamatban" }
+        5 { Get-ADcomputersState }
         6 { Get-IPaddressesState }
         S { Set-Settings }
         K { Exit }
