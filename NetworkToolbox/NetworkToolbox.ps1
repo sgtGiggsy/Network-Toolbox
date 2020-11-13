@@ -1073,7 +1073,7 @@ function Set-OU
 
 function Get-IPRange
 {
-    param ($elsoIP, $utolsoIP)
+    param ($elsoIP, $utolsoIP, $elsokihagyott, $utolsokihagyott)
 
     $eszkoz = New-Object System.Collections.ArrayList($null)
     for($elsotag = $elsoIP.Tag1; $elsotag -le $utolsoIP.Tag1; $elsotag++)
@@ -1126,7 +1126,35 @@ function Get-IPRange
                 for ($negyediktag = $nyitoIP4; $negyediktag -le $zaroIP4; $negyediktag++)
                 {
                     $ipstring = "$($elsotag).$($masodiktag).$($harmadiktag).$($negyediktag)"
-                    $eszkoz.Add([Remote]::New($ipstring, $false)) > $null
+                    $beszamol = $true
+                    if($elsokihagyott)
+                    {
+                        if(($harmadiktag -ge $elsokihagyott.Tag3) -and ($harmadiktag -le $utolsokihagyott.Tag3))
+                        {
+                            if ($harmadiktag -eq $utolsokihagyott.Tag3)
+                            {
+                                if ($negyediktag -le $utolsokihagyott.Tag4)
+                                {
+                                    $beszamol = $false
+                                }
+                            }
+                            elseif($harmadiktag -eq $elsokihagyott.Tag3)
+                            {
+                                if($negyediktag -gt $elsokihagyott.Tag4)
+                                {
+                                    $beszamol = $false
+                                }
+                            }
+                            elseif(($harmadiktag -gt $elsokihagyott.Tag3) -and ($harmadiktag -lt $utolsokihagyott.Tag3))
+                            {
+                                $beszamol = $false
+                            }
+                        }
+                    }
+                    if($beszamol)
+                    {
+                        $eszkoz.Add([Remote]::New($ipstring, $false)) > $null
+                    }
                 }
             }
         }
@@ -1142,10 +1170,18 @@ function Import-IPaddresses
         Show-Cimsor "IP TARTOMÁNY ELLENŐRZŐ"
         if ($debug -ne 1)
         {
-            Write-Host "Kérlek add meg a lekérdezni kívánt IP tartomány első IP címét"
+            Write-Host "Kérlek add meg a lekérdezni kívánt IP tartomány első IP címét!"
             $script:elsoIP = New-Object IPcim(Read-Host -Prompt "Első IP cím")
-            Write-Host "Kérlek add meg a lekérdezni kívánt IP tartomány utolsó IP címét"
+            Write-Host "Kérlek add meg a lekérdezni kívánt IP tartomány utolsó IP címét!"
             $script:utolsoIP = New-Object IPcim(Read-Host -Prompt "Utolsó IP cím")
+            Write-Host "Szeretnél kihagyni egy megadott tartományt a két IP cím között?`nAdd meg a kihagyni kívánt tartomány also IP címét, ha igen, üss Entert, ha nem!"
+            $valassz = Read-Host -Prompt "Válassz"
+            if($valassz)
+            {
+                $script:elsokihagyott = New-Object IPcim($valassz)
+                Write-Host "Kérlek add meg az utolsó kihagyni kívánt IP címet!"
+                $script:utolsokihagyott = New-Object IPcim(Read-Host -Prompt "Utolsó kihagyott IP cím")
+            }
         }
         else
         {
@@ -1154,6 +1190,11 @@ function Import-IPaddresses
         }
 
         $script:ipdarab = Get-IPcount $elsoIP $utolsoIP
+        if($script:elsokihagyott)
+        {
+            $kihagy = Get-IPcount $script:elsokihagyott $script:utolsokihagyott
+            $script:ipdarab = $script:ipdarab - $kihagy
+        }
 
         if ($elsoIP.ToString() -eq $utolsoIP.ToString())
         {
@@ -1163,7 +1204,7 @@ function Import-IPaddresses
         }
         elseif($ipdarab -lt 1)
         {
-            Write-Host "A kezdőként megadott IP cím magasabb, mint az utolsóként megadott! Így a lekérdezés nem folytatható le!`nEgy billentyű leütését követően kérlek add meg újra a lekérdezni kívánt tartományt!" -ForegroundColor Red
+            Write-Host "A megadott tartományban nincs egyetlen IP cím sem! Így a lekérdezés nem folytatható le!`nEgy billentyű leütését követően kérlek add meg újra a lekérdezni kívánt tartományt!" -ForegroundColor Red
             Read-Host
             $endloop = $false
         }
@@ -1179,7 +1220,14 @@ function Import-IPaddresses
             }
         }
     }while(!$endloop)
-    $eszkozok = Get-IPRange $elsoIP $utolsoIP
+    if($script:elsokihagyott)
+    {
+        $eszkozok = Get-IPRange $elsoIP $utolsoIP $script:elsokihagyott $script:utolsokihagyott
+    }
+    else
+    {
+        $eszkozok = Get-IPRange $elsoIP $utolsoIP
+    }
     
     return $eszkozok
 }
