@@ -1140,7 +1140,7 @@ function Get-IPRange
                             }
                             elseif($harmadiktag -eq $elsokihagyott.Tag3)
                             {
-                                if($negyediktag -gt $elsokihagyott.Tag4)
+                                if($negyediktag -ge $elsokihagyott.Tag4)
                                 {
                                     $beszamol = $false
                                 }
