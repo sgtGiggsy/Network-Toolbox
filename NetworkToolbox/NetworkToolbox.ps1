@@ -20,6 +20,8 @@ Class Setting
     $port
     [int32]$waittime
     [int32]$maxhiba
+    [int32]$retrytime
+    $csvkonyvtar
     $csvnevelotag
     $aktivnapok
     $logfile = ".\Logfiles\NetworkToolbox.log"
@@ -111,7 +113,9 @@ Class Setting
             $this.port = $config.port
             [int32]$this.waittime = $config.waittime
             [int32]$this.maxhiba = $config.maxhiba
+            [int32]$this.retrytime = $config.retrytime
             $this.csvnevelotag = $config.csvnevelotag
+            $this.csvkonyvtar = $config.csvkonyvtar
             $this.aktivnapok = $config.aktivnapok
         }
     }
@@ -128,8 +132,10 @@ Class Setting
         $this.port = 23
         [int32]$this.waittime = 500
         [int32]$this.maxhiba = 4
+        [int32]$this.retrytime = 600
         $this.aktivnapok = 180
         $this.csvnevelotag = "Geplista"
+        $this.csvkonyvtar = ".\Logfiles"
         $this.logfile = ".\Logfiles\NetworkToolbox.log"
     }
 
@@ -274,8 +280,10 @@ Class Setting
         "port = $($this.port)" | Out-File .\config.ini -Append
         "waittime = $($this.waittime)" | Out-File .\config.ini -Append
         "maxhiba = $($this.maxhiba)" | Out-File .\config.ini -Append
+        "retrytime = $($this.retrytime)" | Out-File .\config.ini -Append
         "aktivnapok = $($this.aktivnapok)" | Out-File .\config.ini -Append
         "csvnevelotag = $($this.csvnevelotag)" | Out-File .\config.ini -Append
+        "csvkonyvtar = $($this.csvkonyvtar)" | Out-File .\config.ini -Append
         "logfile = $($path)" | Out-File .\config.ini -Append
     }
 }
@@ -381,7 +389,7 @@ Class Eszkoz
 
     SetFelhasznalo()
     {
-        if($script:admin)
+        if($script:config.admin)
         {
             $this.Felhasznalo = Get-UtolsoUser $this.Eszkoznev
         }
@@ -1076,13 +1084,12 @@ function Test-Ping
 Function Test-CSV
 {
     Param($kozeptag)
-    $mentohely = ".\Logfiles"
     $script:csvnev = "$($config.csvnevelotag)-$kozeptag.csv"
     $script:oldcsvnev = "$($config.csvnevelotag)-$kozeptag-OLD.csv"
     $script:csv = ".\Logfiles\$script:csvnev"
     $script:oldcsv = ".\Logfiles\$script:oldcsvnev"
     $script:csvsave = $script:csv
-    $script:csvkimenet = "$mentohely\VÉGEREDMÉNY_$($config.csvnevelotag)_$kozeptag.csv"
+    $script:csvkimenet = "$($config.csvkonyvtar)\VÉGEREDMÉNY_$($config.csvnevelotag)_$kozeptag.csv"
 
     if (Test-Path $script:oldcsv)
     {
@@ -1355,10 +1362,15 @@ function Get-IPRange
                             $eszkoz.Add([Remote]::New($ipstring, $false)) > $null
                         }
                     }
+                    else
+                    {
+                        $eszkoz.Add([Remote]::New($ipstring, $false)) > $null
+                    }
                 }
             }
         }
     }
+
     return $eszkoz
 }
 
@@ -1440,7 +1452,7 @@ function Import-IPaddresses
             Read-Host
             $endloop = $false
         }
-        elseif(($ipdarab -lt 1) -or ((Compare-IPs $elsoIP $elsokihagyott)) -or ((Compare-IPs $utolsokihagyott $utolsoIP)))
+        elseif($ipdarab -lt 1)
         {
             Write-Host "A megadott tartományban nincs egyetlen IP cím sem! Így a lekérdezés nem folytatható le!`nEgy billentyű leütését követően kérlek add meg újra a lekérdezni kívánt tartományt!" -ForegroundColor Red
             Read-Host
@@ -1457,6 +1469,15 @@ function Import-IPaddresses
                 $endloop = $false
             }
         }
+        elseif($elsokihagyott)
+        {
+            if ((Compare-IPs $elsoIP $elsokihagyott) -or (Compare-IPs $utolsokihagyott $utolsoIP))
+            {
+                Write-Host "A megadott tartományban nincs egyetlen IP cím sem! Így a lekérdezés nem folytatható le!`nEgy billentyű leütését követően kérlek add meg újra a lekérdezni kívánt tartományt!" -ForegroundColor Red
+                Read-Host
+                $endloop = $false
+            }
+        }
     }while(!$endloop)
     if($script:elsokihagyott)
     {
@@ -1466,7 +1487,7 @@ function Import-IPaddresses
     {
         $eszkozok = Get-IPRange $elsoIP $utolsoIP
     }
-    
+
     return $eszkozok
 }
 
@@ -1607,13 +1628,13 @@ function Import-ADList
 
         # Ha nem vagyunk meg minden géppel, belépünk a késleltető ciklusba,
         # ami a fő ciklust pihenteti egy kicsit.
-        $ujraprobalkozas = 600
         if ($script:elemszam -ne $keszdb)
         {
-            for ($i = 0; $i -lt $ujraprobalkozas; $i++)
+            for ($i = 0; $i -lt $config.retrytime; $i++)
             {
-                $remaining = $ujraprobalkozas - $i
-                Write-Host "`rA folyamat folytatódik $remaining másodperc múlva.    " -NoNewline
+                $remaining = $config.retrytime - $i
+                Write-Host "`r                                                        " -NoNewline
+                Write-Host "`rA folyamat folytatódik $remaining másodperc múlva." -NoNewline
                 Start-Sleep -s 1
             }
             Write-Host "`r                                                                  "
@@ -1719,7 +1740,7 @@ function Get-IPaddressesState
 
     foreach ($eszkoz in $eszkozok)
     {
-        Write-Host "$($eszkoz.IPaddress) kapcsolatának ellenőrzése $(($jelenelem/$eszkozok.Length))" -NoNewline
+        Write-Host "$($eszkoz.IPaddress) kapcsolatának ellenőrzése ($jelenelem/$($eszkozok.Length))" -NoNewline
         switch ($method)
         {
             1 { $online = Test-Ping $eszkoz.IPaddress }
@@ -1730,7 +1751,7 @@ function Get-IPaddressesState
         $eszkoz.Online = $online
         $name = ""
         $neve = ""
-        if($online -and ($nevgyujtes -eq 1))
+        if($online -and $config.nevgyujtes)
         {
             $name = Get-NameByIP $eszkoz.IPaddress
             $neve = "; Neve: $name"
