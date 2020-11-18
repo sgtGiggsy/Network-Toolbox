@@ -1138,6 +1138,8 @@ function Get-IPRange
     param ($elsoIP, $utolsoIP, $elsokihagyott, $utolsokihagyott)
 
     $eszkoz = New-Object System.Collections.ArrayList($null)
+    $keszip = New-Object IPcim("1.1.1.1")
+
     for($elsotag = $elsoIP.Tag1; $elsotag -le $utolsoIP.Tag1; $elsotag++)
     {
         $zaroIP2 = 255
@@ -1188,40 +1190,53 @@ function Get-IPRange
                 for ($negyediktag = $nyitoIP4; $negyediktag -le $zaroIP4; $negyediktag++)
                 {
                     $ipstring = "$($elsotag).$($masodiktag).$($harmadiktag).$($negyediktag)"
-                    $beszamol = $true
                     if($elsokihagyott)
                     {
-                        if(($harmadiktag -ge $elsokihagyott.Tag3) -and ($harmadiktag -le $utolsokihagyott.Tag3))
+                        $keszip.NoCheck($ipstring)
+                        if((Compare-IPs $elsokihagyott $keszip) -or (Compare-IPs $keszip $utolsokihagyott))
                         {
-                            if ($harmadiktag -eq $utolsokihagyott.Tag3)
-                            {
-                                if ($negyediktag -le $utolsokihagyott.Tag4)
-                                {
-                                    $beszamol = $false
-                                }
-                            }
-                            elseif($harmadiktag -eq $elsokihagyott.Tag3)
-                            {
-                                if($negyediktag -ge $elsokihagyott.Tag4)
-                                {
-                                    $beszamol = $false
-                                }
-                            }
-                            elseif(($harmadiktag -gt $elsokihagyott.Tag3) -and ($harmadiktag -lt $utolsokihagyott.Tag3))
-                            {
-                                $beszamol = $false
-                            }
+                            $eszkoz.Add([Remote]::New($ipstring, $false)) > $null
                         }
-                    }
-                    if($beszamol)
-                    {
-                        $eszkoz.Add([Remote]::New($ipstring, $false)) > $null
                     }
                 }
             }
         }
     }
     return $eszkoz
+}
+
+function Compare-IPs
+{
+    param ($IP1, $IP2)
+    
+    $elsonagyobb = $false
+    if ($IP1.Tag1 -gt $IP2.Tag1)
+    {
+        $elsonagyobb = $true
+    }
+    elseif($IP1.Tag1 -eq $IP2.Tag1)
+    {
+        if($IP1.Tag2 -gt $IP2.Tag2)
+        {
+            $elsonagyobb = $true
+        }
+        elseif($IP1.Tag2 -eq $IP2.Tag2)
+        {
+            if($IP1.Tag3 -gt $IP2.Tag3)
+            {
+                $elsonagyobb = $true
+            }
+            elseif($IP1.Tag3 -eq $IP2.Tag3)
+            {
+                if($IP1.Tag4 -gt $IP2.Tag4)
+                {
+                    $elsonagyobb = $true
+                }
+            }
+        }
+    }
+
+    return $elsonagyobb 
 }
 
 function Import-IPaddresses
@@ -1268,7 +1283,7 @@ function Import-IPaddresses
             Read-Host
             $endloop = $false
         }
-        elseif($ipdarab -lt 1)
+        elseif(($ipdarab -lt 1) -or ((Compare-IPs $elsoIP $elsokihagyott)) -or ((Compare-IPs $utolsokihagyott $utolsoIP)))
         {
             Write-Host "A megadott tartományban nincs egyetlen IP cím sem! Így a lekérdezés nem folytatható le!`nEgy billentyű leütését követően kérlek add meg újra a lekérdezni kívánt tartományt!" -ForegroundColor Red
             Read-Host
@@ -1296,35 +1311,6 @@ function Import-IPaddresses
     }
     
     return $eszkozok
-}
-
-## MEGÍRÁS ALATTI FÜGGVÉNY. NE HASZNÁLD!!!!
-function IPcimChecker {
-    param ($sorsz, $elemszam)
-    
-    $gepnev = $gep[$sorsz].Nev() # Az egyszerűbb kezelésért a metódus eredményét kitesszük egy stringbe
-    $ind = $sorsz + 1 # Erre azért van szükség, hogy a program helyesen jelezze, hányadik gépnél járunk
-    Write-Host "($ind/$elemszam)" -NoNewline
-    # Csak akkor kezdjük meg a gép ellenőrzését, ha online állapotban van, és méég nem lett leellenőrizve
-    if ((Test-Connection $gepnev -Quiet -Count 1) -and (!($gep[$sorsz].Kesze())))
-    {
-        # Erre a try-catch blokkra azért van szükség, mert "beragadnak" bejegyzések a DNS szerverbe
-        # így néha akkor is onlinenak jelez a rendszer egy gépet, ha a legutolsó ismert IP-jén talál.
-        # Ez azért okoz gondot, mert az adott helyet a hibás pingválasz ellenére nem lehet elérni,
-        # viszont a program mégis megpróbálja és ez kivételt dob.
-        $ipcim = (Test-Connection $gepnev -Count 1).IPV4Address
-        $gep[$sorsz].SetIPcim($ipcim)
-        $gep[$sorsz].SetKesz()
-        Log "[ONLINE] A(z) $gepnev számítógép online van, IP címe: $ipcim"
-        Write-Host "`rA(z) $gepnev számítógép online van, IP címe: $ipcim"
-        $gep[$sorsz] | export-csv -encoding UTF8 -path ".\Logfiles\IPlista.csv" -NoTypeInformation -Append -Force -Delimiter ";"
-
-    }
-    else
-    {
-        Log "[OFFLINE] A(z) $gepnev számítógép jelenleg nem érhető el"
-        Write-Host "`rA(z) $gepnev számítógép jelenleg nem érhető el"
-    }
 }
 
 #####
@@ -1569,13 +1555,14 @@ function Get-IPaddressesState
     $eszkozok = Import-IPaddresses
     $time = [Time]::New()
     [Setting]::csvnevelotag = "IP_Címlista"
+    $jelenelem = 1
     Test-CSV "$($elsoIP.ToString())-$($utolsoIP.ToString())_$($time.FileName())"
 
     Show-Cimsor "A(Z) $($elsoIP.ToString()) - $($utolsoIP.ToString()) IP TARTOMÁNY LEKÉRDEZÉSE"
 
     foreach ($eszkoz in $eszkozok)
     {
-        Write-Host "$($eszkoz.IPaddress) kapcsolatának ellenőrzése" -NoNewline
+        Write-Host "$($eszkoz.IPaddress) kapcsolatának ellenőrzése $(($jelenelem/$eszkozok.Length))" -NoNewline
         switch ($method)
         {
             1 { $online = Test-Ping $eszkoz.IPaddress }
@@ -1594,6 +1581,7 @@ function Get-IPaddressesState
         }
 
         $eszkoz.Online = $eszkoz.EszkozAllapot()
+        $jelenelem++
         Write-Host "`r$($eszkoz.IPaddress): Állapota: $($eszkoz.Online)$neve                  "
         Add-Log "[ESZKÖZ ÁLLAPOT] $($eszkoz.IPaddress): Állapota: $($eszkoz.Online)$neve Idő: $([Time]::Stamp())"
         if(($logonline -eq 1) -and ($logoffline -eq 1))
@@ -1611,143 +1599,47 @@ function Get-IPaddressesState
     }
 }
 
-## MEGÍRÁS ALATTI FÜGGVÉNY. NE HASZNÁLD!!!
 function Get-ADcomputersState
 {
-    $vane = $false
-    do
+    Show-Cimsor "AD OU PILLANATYNI ÁLLAPOTÁNAK LEKÉRDEZÉSE"
+    Set-Logname "EszkozAllapot"
+    [Setting]::csvnevelotag = "AD_GépÁllapot"
+
+    Write-Host "Kérlek szúrd be a lekérdezni kívánt OU elérési útját!"
+    $valaszt = Read-Host -Prompt "Válassz"
+    $ADgeplista = Set-OU $valaszt
+    Show-Cimsor "A(Z) $($script:ounev) OU GÉPEINEK LEKÉRDEZÉSE"
+    [Import]::AD($ADgeplista) # Meghívjuk az importáló osztály ADból imortálást végző statikus metódusát
+    $jelenelem = 1
+
+    foreach ($eszkoz in $eszkozok)
     {
-        do
-        {        
-            if($config.log -eq "0")
-            {
-                Write-Host "Figyelem logolás kikapcsolva!" -ForegroundColor Red
-            }
-    
-            # Mivel ez a változó csak akkor áll false állapotban, ha nem, vagy rosszul lett megadva az OU neve,
-            # így ennek állapotát ellenőrizve tudjuk biztosítani, hogy a program ne próbálja minden ciklus
-            # során bekérni az OU nevét.
-            if (!($vane))
-            {
-                $ellenorzendoOU = OUcheck
-                $vane = $true
-            }
-            Clear-Host
-            Write-Host "A(z) $($script:ounev) OU-ban található számítógépek IP címének ellenőrzése`n"
-            $csvnev = "GepLista-$($Script:ounev).csv"
-            $oldcsvnev = "GepLista-$($Script:ounev)-OLD.csv"
-            $csv = ".\Logfiles\$csvnev"
-            $oldcsv = ".\Logfiles\$oldcsvnev"
-            $csvsave = ".\Logfiles\$csvnev"
-    
-            # Ha ciklus ezen pontján létezik a régebbi verzió a nem elérhető gépeket tartalmazó fájlból,
-            # az azt jelenti, hogy a legutolsó ciklus félbeszakadt. Ilyenkor a legutolsó ciklus eredményét
-            # törli a rendszer, és az eggyel korábbit használva indítja el a ciklust 
-            if (Test-Path $oldcsv)
-            {
-                if (Test-Path $csv)
-                {
-                    # Erre az ellenőrzésre azért van szükség, hogy egy véletlenül letörölt CSV fájl ne akassza ki a program működését
-                    Remove-Item -Path $csv
-                }
-                $csv = $oldcsv
-            }
-    
-            # Ha létezik az adott OU nem elérhető gépeit tartalmazó lista, úgy a ciklus már egyszer lefutott,
-            # tehát ha nem a fájlt használnánk, tehát a fájl tartalmát kell használnunk,
-            # máskülönben a program nem tudna egy félbeszakadt folyamatot folytatni
-            $csvletezik = Test-Path $csv
-            if ($csvletezik)
-            {
-                $csvdata = Import-Csv -Path $csv -Delimiter ";"
-                $elemszam = $csvdata.Length
-                $gep = New-Object 'object[]' $elemszam
-                for ($i=0; $i -lt $elemszam; $i++)
-                {
-                    $gep[$i] = [EllenorzendoGepek]::New($csvdata[$i].Gepneve)
-                }
-    
-                if($csv -ne $oldcsv)
-                {
-                    Rename-Item -Path $csv -NewName $oldcsvnev
-    
-                }
-            }
-            else
-            {
-                if (!($config.aktivnapok)) # Ha nem adunk meg értéket a konfig fájlban, úgy az érték itt 180 nap
-                {
-                    $time = (Get-Date).Adddays(-180)
-                }
-                else
-                {
-                    $time = (Get-Date).Adddays(-($config.aktivnapok))
-                }
-                
-                $geplista = Get-ADComputer -Filter {LastLogonTimeStamp -gt $time} -SearchBase $ellenorzendoOU
-                $elemszam = $geplista.Length
-                if($elemszam -eq 0)
-                {
-                    Write-Host "A megadott OU-ban nincsenek számítógépek`n" -ForegroundColor Red
-                    $vane = $false                        
-                }
-                else
-                {
-                    $logtime = get-date -Format "yyyy.MM.dd HH:mm"
-                    Log "[FOLYAMAT MEGKEZDŐDÖTT] A(z) $($script:ounev) OU számítógépeinek ellenőrzése megkezdődött $logtime-kor"
-                    $gep = New-Object 'object[]' $elemszam
-                    for($i = 0; $i -lt $elemszam; $i++)
-                    {
-                        $gep[$i] = [EllenorzendoGepek]::New($geplista[$i].Name)
-                        # A geplista-OUnev-OLD csv fájlba azonnal kitett gép objektumokkal biztosíthatjuk, hogy ha az első ellenőrzés során a program le is állna,
-                        # a következő futáskor ne terheljük az AD-t a gépek újboli lekérdezésével.
-                        $gep[$i] | export-csv -encoding UTF8 -path $oldcsv -NoTypeInformation -Append -Force -Delimiter ";"
-                    }
-                }
-            }
-        } while (!($vane))
-    
-        # Ez a ciklus hívja meg egyenként minden $gep objektumra a TMAllapotEllenorzo függvényt
-        for($i = 0; $i -lt $elemszam; $i++)
+        Write-Host "$($eszkoz.Eszkoznev) kapcsolatának ellenőrzése $(($jelenelem/$eszkozok.Length))" -NoNewline
+        switch ($method)
         {
-            IPcimChecker $i $elemszam
-            # Ha a gép elkeszult attribútuma false állapotban van, úgy kitesszük a csv fájlba,
-            # és a legközelebbi futásakor a program már csak az ilyen gépekkel foglalkozik
-            
-            if(!($gep[$i].Kesze()))
-            {
-                $gep[$i] | export-csv -encoding UTF8 -path $csvsave -NoTypeInformation -Append -Force -Delimiter ";"
-            }
+            1 { $online = Test-Ping $eszkoz.Eszkoznev }
+            2 { $online = (Test-Connection $eszkoz.Eszkoznev -Quiet -Count 1) }
+            Default{ $online = Test-Ping $eszkoz.Eszkoznev }
         }
-    
-        # Ha létezik korábbi futásból visszamaradt elérhetetlen gépek listáját tartalmazó CSV fájl,
-        # úgy azt itt töröljük. Ezzel biztosítjuk, hogy a következő ciklus elején a program tudja,
-        # az utolsó ciklus rendben végigfutott.
-        if (Test-Path $oldcsv)
+
+        $eszkoz.Online = $online
+        $eszkoz.Online = $eszkoz.EszkozAllapot()
+        $jelenelem++
+        Write-Host "`r$($eszkoz.Eszkoznev): Állapota: $($eszkoz.Online)                  "
+        Add-Log "[ESZKÖZ ÁLLAPOT] $($eszkoz.Eszkoznev): Állapota: $($eszkoz.Online) Idő: $([Time]::Stamp())"
+        if(($logonline -eq 1) -and ($logoffline -eq 1))
         {
-            Remove-Item -Path $oldcsv
+            $eszkoz | export-csv -encoding UTF8 -path $script:csvkimenet -NoTypeInformation -Append -Force -Delimiter ";"
         }
-    
-        Clear-Host
-        Write-Host "A(z) $($script:ounev) OU-ban található számítógépek IP címének ellenőrzése`n"
-    
-        # Nem biztos, hogy szükséges, de talán célszerű az előző futás során keletkező
-        # objektumokat töröltetni a PowerShell szemétgyűjtőjével
-        [system.gc]::Collect()
-        
-        # Itt a program futása nyugovóra tér a konfig fájlban megadott időre.
-        for ($i = 0; $i -lt $config.ujraprobalkozas; $i++)
+        elseif(($logonline -eq 1) -and $online)
         {
-            $remaining = $config.ujraprobalkozas - $i
-            Write-Host "`rA(z) $($script:ounev) OU számítógépein az IP címek begyűjtése folytatódik $remaining másodperc múlva.      " -NoNewline
-            Start-Sleep -s 1
+            $eszkoz | export-csv -encoding UTF8 -path $script:csvkimenet -NoTypeInformation -Append -Force -Delimiter ";"
         }
-    } while ($elemszam -gt 0)
-    
-    $logtime = get-date -Format "yyyy.MM.dd HH:mm"
-    Log "[FOLYAMAT VÉGE] A(z) $($script:ounev) OU összes számítógépének ellenőrzése befejeződött $logtime-kor"
-    Write-Host "A(z) $($script:ounev) OU összes számítógépének ellenőrzése a végéhez ért.`nA program egy billentyű leütését követően kilép."
-    Read-Host    
+        elseif(($logoffline -eq 1) -and !$online)
+        {
+            $eszkoz | export-csv -encoding UTF8 -path $script:csvkimenet -NoTypeInformation -Append -Force -Delimiter ";"
+        }
+    }  
 }
 
 function Set-Settings
