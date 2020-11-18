@@ -1,54 +1,4 @@
-﻿# A logok és CSV mentésénél hibát okoz, ha a Logfiles mappa nem létezik,
-# ezért ha valamiért nem létezne, itt a futás elején létrehozzuk.
-if (!(Test-Path .\Logfiles))
-{
-    New-Item -Path . -Name "Logfiles" -ItemType "Directory" | Out-Null
-}
-
-$adminobj = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
-$script:admin = $adminobj.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-
-# A rugalmasabb kezelésért a program külső, szerkeszthető INI fájllal paraméterezhető. Itt kérjük be
-# az INI fájlt, és amennyiben azzal valami hiba lenne, folytatjuk az alapértelmezett értékekkel
-try
-{
-    $ErrorActionPreference = "Stop"
-    $config = Get-Content ".\config.ini" | Out-String | ConvertFrom-StringData
-    $log = $config.log
-    $script:aktivnapok = $config.aktivnapok
-    $ujraprobalkozas = $config.ujraprobalkozas
-    $updater = $config.updater
-    $frissitomappanev = $config.frissitomappanev
-    $csvnevelotag = $config.csvnevelotag
-    $kozeptag = $config.kozeptag
-    $celkonyvtar = $config.celkonyvtar
-    $script:frissitofajl = $config.frissitofajl
-}
-catch [System.ArgumentException]
-{
-    Write-Host "HIBA A KONFIGURÁCIÓS FÁJLBAN!" -ForegroundColor Red
-    Write-Host "Valószínűleg hiányzik egy \ jel valahonnan, ahol kettőnek kellene lennie egymás mellett" -ForegroundColor Yellow
-    $konfighiba = 1
-}
-catch [System.Management.Automation.ItemNotFoundException]
-{
-    Write-Host "A CONFIG.INI FÁJL HIÁNYZIK, VAGY SÉRÜLT!" -ForegroundColor Red
-    $konfighiba = 2
-}
-
-if ($konfighiba)
-{
-    #Write-Host "`nA program az alapértelmezett beállításokkal fog futni. A folytatáshoz üss le egy billentyűt!"
-    $setting = [Setting]::New()
-}
-
-switch ($confighiba) {
-    1 { Add-Log "[HIBA] A konfigurációs fájlban hibás érték(ek) szerepel(nek)!" }
-    2 { Add-Log "[HIBA] A konfigurációs fájl hiányzik, vagy sérült!" }
-    Default {}
-}
-
-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+﻿#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 #-#-#                                     OSZTÁLYOK                                           #-#-#
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 
@@ -60,19 +10,273 @@ switch ($confighiba) {
 
 Class Setting
 {
-    static $IPpattern = "^([1-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])(\.([0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])){3}$"
-    static $Switch = "10.59.1.252"
-    static $log = 1
-    static $port = 23
-    static [int32]$waittime = 500
-    static [int32]$maxhiba = 4
-    static $frissitomappanev = "HKR tudakozó"
-    static $csvnevelotag = "Geplista"
-    static $aktivnapok = 180
+    $log
+    $logtime
+    $debug
+    $nevgyujtes
+    $logonline
+    $logoffline
+    $Switch
+    $port
+    [int32]$waittime
+    [int32]$maxhiba
+    $csvnevelotag
+    $aktivnapok
+    $logfile = ".\Logfiles\NetworkToolbox.log"
+    ## FIX változók
+    $IPpattern = "^([1-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])(\.([0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])){3}$"
+    $hiba
+    $admin
+    $AD
 
     Setting()
     {
+        if (!(Test-Path .\Logfiles))
+        {
+            New-Item -Path . -Name "Logfiles" -ItemType "Directory" | Out-Null
+        }
 
+        $this.DefaultSettings()
+        $this.AdminState()
+        $this.ADmodul()
+
+        if(Test-Path ".\config.ini")
+        {
+            $this.FromFile()
+        }
+        else
+        {
+            Write-Host "A CONFIG.INI FÁJL HIÁNYZIK, VAGY SÉRÜLT!" -ForegroundColor Red
+            $this.hiba = 1
+        }
+
+        if ($this.hiba)
+        {
+            switch ($this.maxhiba)
+            {
+                1 { Add-Log "[KONFIGURÁCIÓS HIBA] A konfigurációs fájl hiányzik, vagy sérült" }
+                2 { Add-Log "[KONFIGURÁCIÓS HIBA] A konfigurációs fájlban hibás érték(ek) szerepel(nek)" }
+                3 { Add-Log "[KONFIGURÁCIÓS HIBA] Ismeretlen hiba a konfigurációs fájllal" }
+                Default {}
+            }
+            Write-Host "A program az alapértelmezett beállításokkal fog futni. A folytatáshoz üss le egy billentyűt!"
+            Read-Host
+        }
+    }
+
+    FromFile()
+    {
+        $config = @{}
+        try
+        {
+            $ErrorActionPreference = "Stop"
+            $config = Get-Content ".\config.ini" | Out-String | ConvertFrom-StringData
+        }
+        catch [System.ArgumentException]
+        {
+            Write-Host "HIBA A KONFIGURÁCIÓS FÁJLBAN!" -ForegroundColor Red
+            Write-Host "Valószínűleg hiányzik egy \ jel valahonnan, ahol kettőnek kellene lennie egymás mellett" -ForegroundColor Yellow
+            $this.hiba = 2
+        }
+        catch
+        {
+            Write-Host "ISMERETLEN HIBA!" -ForegroundColor Red
+            $this.hiba = 3
+        }
+
+        if($this.hiba)
+        {
+            $this.DefaultSettings()
+        }
+        else
+        {
+            foreach ($key in @($config.keys))
+            {
+                if ($config[$key] -eq "True")
+                {
+                    $config[$key] = $true
+                }
+                elseif ($config[$key] -eq "False")
+                {
+                    $config[$key] = $false
+                }
+            }
+            $this.log = $config.log
+            $this.logtime = $config.logtime
+            $this.debug = $config.debug
+            $this.logonline = $config.logonline
+            $this.logoffline = $config.logoffline
+            $this.nevgyujtes = $config.nevgyujtes
+            $this.Switch = $config.switch
+            $this.port = $config.port
+            [int32]$this.waittime = $config.waittime
+            [int32]$this.maxhiba = $config.maxhiba
+            $this.csvnevelotag = $config.csvnevelotag
+            $this.aktivnapok = $config.aktivnapok
+        }
+    }
+
+    DefaultSettings()
+    {
+        $this.log = $true
+        $this.logtime = $true
+        $this.debug = $false
+        $this.nevgyujtes = $true
+        $this.logonline = $true
+        $this.logoffline = $true
+        $this.Switch = "10.59.1.252"
+        $this.port = 23
+        [int32]$this.waittime = 500
+        [int32]$this.maxhiba = 4
+        $this.aktivnapok = 180
+        $this.csvnevelotag = "Geplista"
+        $this.logfile = ".\Logfiles\NetworkToolbox.log"
+    }
+
+    AdminState()
+    {
+        $adminobj = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+        $this.admin = $adminobj.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    }
+
+    ADmodul()
+    {
+        $this.AD = $true
+        if (!(Get-Module -ListAvailable -Name ActiveDirectory)) 
+        {
+            try
+            {
+                $ErrorActionPreference = "Stop"
+                Import-Module .\Microsoft.ActiveDirectory.Management.dll
+                Import-Module .\Microsoft.ActiveDirectory.Management.resources.dll
+            }
+            catch
+            {
+                Add-Log "[HIÁNYZÓ MODUL] Az AD modul nincs telepítve, és a kapcsolódó DLL-ek sem találhatóak"
+                $this.AD = $false
+            }
+        }
+        if($this.AD)
+        {
+            try
+            {
+                Get-ADUser teszt
+            }
+            catch #[Microsoft.ActiveDirectory.Management.ADServerDownException]
+            {
+                Add-Log "[ELÉRHETETLEN ACTIVE DIRECTORY] A hálózaton nincs elérhető Active Directory kiszolgáló"
+                $this.AD = $false
+            }
+        }
+    }
+
+    ModifyConfig()
+    {
+        $valasztas = $false
+        do
+        {
+            Show-Cimsor "BEÁLLÍTÁSOK"
+
+            $csvsavemode = 0
+            if ($this.logonline -and $this.logoffline)
+            {
+                $optlogonline = "Az Online és Offline gépek is mentésre kerülnek"
+                $csvsavemode = 1
+            }
+            elseif ($this.logonline -and !$this.logoffline)
+            {
+                $optlogonline = "Csak az Online gépek kerülnek mentésre"
+                $csvsavemode = 2
+            }
+            elseif (!$this.logonline -and $this.logoffline)
+            {
+                $optlogonline = "Csak az Offline gépek kerülnek mentésre"
+                $csvsavemode = 3
+            }
+            else
+            {
+                $optlogonline = "Az eredmények nem kerülnek mentésre"
+                $csvsavemode = 0
+            }
+
+            if ($this.method -eq 2)
+            {
+                $optmethod = "Sokkal lassabb, de valamivel megbízhatóbb"
+            }
+            else
+            {
+                $optmethod = "Gyors, de néha ad fals negatív eredményt"
+            }
+            Write-Host "(1) Logolás: " -NoNewline
+            Get-TrueFalse $this.log
+            Write-Host "(2) Időbélyegző a logokhoz: " -NoNewline
+            Get-TrueFalse $this.logtime
+            Write-Host "(3) Debug mód: " -NoNewline
+            Get-TrueFalse $this.debug
+            Write-Host "(4) Pingelés során az online eszközök nevének gyűjtése (bizonyos esetekben jelentősen lassíthatja a folyamatot): " -NoNewline
+            Get-TrueFalse $this.nevgyujtes
+            Write-Host "(5) A pingelési folyamat során készülő CSV fájlba: $optlogonline"
+            Write-Host "(6) A lekérdezés módja: $optmethod"
+            Write-Host "(7) Az eszközök kereséséhez használt switch IP címe: $($this.Switch)"
+            Write-Host "(8) Alapértelmezett várakozási idő két switch parancs között miliszekundumban: $($this.waittime)"
+            Write-Host "(9) Maximális újrapróbálkozások száma sikertelen eredmény esetén: $($this.maxhiba)"
+            Write-Host "(10) AD lekérdezés esetén ennyi napon belül belépett gépek használata: $($this.aktivnapok)"
+            Write-Host "(11) A logok mentésének jelenlegi fájlja: $($this.logfile)"
+            Write-Host "(K) Beállítások véglegesítése"
+            Write-Host "A beállítások megváltoztatásához használd a mellettük látható számbillentyűket!"
+            $valasztas = Get-Valasztas ("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "K")
+
+            switch ($valasztas)
+            {
+                1 { if ($this.log) { $this.log = $false} else { $this.log = $true} }
+                2 { if ($this.logtime) { $this.logtime = $false} else { $this.logtime = $true} }
+                3 { if ($this.debug) { $this.debug = $false} else { $this.debug = $true} }
+                4 { if ($this.nevgyujtes) { $this.nevgyujtes = $false} else { $this.nevgyujtes = $true} }
+                5 { if ($csvsavemode -lt 3) { $csvsavemode++ } else { $csvsavemode = 0 } }
+                6 { if ($this.method -eq 1) { $this.method = 2} else { $this.method = 1} }
+                7 { [Telnet]::SetSwitch() }
+                8 { try { [int32]$this.waittime = Read-Host -Prompt "Várakozási idő" } catch { Write-Host "HIBÁS ÉRTÉK" -ForegroundColor Red; Read-Host } }
+                9 { try { [int32]$this.maxhiba = Read-Host -Prompt "Megengedett hibaszám" } catch { Write-Host "HIBÁS ÉRTÉK" -ForegroundColor Red; Read-Host } }
+                10 { try { [int32]$this.aktivnapok = Read-Host -Prompt "Ennyi napon belül aktív gépek" } catch { Write-Host "HIBÁS ÉRTÉK" -ForegroundColor Red; Read-Host } }
+                11 { Write-Host "A program gyökérkönyvtárára a '.\' kezdéssel lehet hivatkozni."; $templog = Read-Host -Prompt "Log mentési hely"; if(!$templog) { Write-Host "HIBÁS ÉRTÉK" -ForegroundColor Red; Read-Host } else { $this.logfile = $templog } }
+                default {}
+            }
+
+            switch ($csvsavemode)
+            {
+                1 { $this.logonline = $true; $this.logoffline = $true }
+                2 { $this.logonline = $true; $this.logoffline = $false }
+                3 { $this.logonline = $false; $this.logoffline = $true }
+                0 { $this.logonline = $false; $this.logoffline = $false }
+            }
+        } while ($valasztas -ne "K")
+
+        Write-Host "Szeretnéd menteni a beállításokat, hogy legközelebb is ezeket használja a program?"
+        Write-Host "Üss I-t, ha igen, N-t, ha nem."
+        $valasztas = Get-YesNo
+
+        if($valasztas -eq "I")
+        {
+            $this.SaveConfig()
+        }
+    }
+
+    SaveConfig()
+    {
+        $path = $this.logfile -Replace "\\", "\\"
+        "log = $($this.log)" | Out-File .\config.ini
+        "logtime = $($this.logtime)" | Out-File .\config.ini -Append
+        "debug = $($this.debug)" | Out-File .\config.ini -Append
+        "nevgyujtes = $($this.nevgyujtes)" | Out-File .\config.ini -Append
+        "logonline = $($this.logonline)" | Out-File .\config.ini -Append
+        "logoffline = $($this.logoffline)" | Out-File .\config.ini -Append
+        "switch = $($this.Switch)" | Out-File .\config.ini -Append
+        "port = $($this.port)" | Out-File .\config.ini -Append
+        "waittime = $($this.waittime)" | Out-File .\config.ini -Append
+        "maxhiba = $($this.maxhiba)" | Out-File .\config.ini -Append
+        "aktivnapok = $($this.aktivnapok)" | Out-File .\config.ini -Append
+        "csvnevelotag = $($this.csvnevelotag)" | Out-File .\config.ini -Append
+        "logfile = $($path)" | Out-File .\config.ini -Append
     }
 }
 
@@ -119,7 +323,7 @@ Class Eszkoz
 
     Eszkoz($bemenet)
     {
-        if($bemenet -match [Setting]::IPpattern)
+        if($bemenet -match $global:config.IPpattern)
         {
             $this.IPaddress = $bemenet
         }
@@ -193,7 +397,6 @@ Class Local
     $SwitchNev
     $SwitchIP
     $Port
-
 
     Local()
     {
@@ -281,7 +484,7 @@ Class Remote
 
     [Bool]IfIP($keresetteszkoz)
     {
-        if($keresetteszkoz -match [Setting]::IPpattern)
+        if($keresetteszkoz -match $global:config.IPpattern)
         {
             return $true
         }
@@ -296,7 +499,7 @@ Class Remote
         $addresses = [System.Net.Dns]::GetHostAddresses($hostname)
         foreach ($address in $addresses)
         {
-            if ($address -match [Setting]::IPpattern)
+            if ($address -match $global:config.IPpattern)
             {
                 $this.IPaddress = $address
                 Break
@@ -322,54 +525,19 @@ Class Remote
     }
 }
 
-## Remote osztállyal összevonás után törölni!!!
-class EllenorzendoGepek
-{
-    $GepNeve
-    $Elkeszult
-    $IPcim
-
-    EllenorzendoGepek($gepnev)
-    {
-        $this.gepneve = $gepnev
-        $this.elkeszult = $false
-    }
-
-    [string]Nev()
-    {
-        return $this.gepneve
-    }
-
-    SetKesz()
-    {
-        $this.elkeszult = $true
-    }
-    
-    [bool]Kesze()
-    {
-        return $this.elkeszult
-    }
-
-    SetIPcim($IPcim)
-    {
-        $this.IPcim = $IPcim
-    }
-}
-
-class IPcim
+Class IPcim
 {
     $tag1
     $tag2
     $tag3
     $tag4
-    $pattern = "^([1-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])(\.([0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])){3}$"
 
     IPcim($bemenet)
     {
         $kimenet = $false
         do
         {
-            if($bemenet -match $this.pattern)
+            if($bemenet -match $global:config.IPpattern)
             {
                 $kimenet = $bemenet.Split(".")
                 [int32]$this.tag1 = $kimenet[0]
@@ -408,8 +576,8 @@ Class Telnet
             $login = $false
             do
             {
-                [Telnet]::SetSwitch()
-                Show-Cimsor "Bejelentkezés a $([Setting]::switch) switchre"
+                #[Telnet]::SetSwitch()
+                Show-Cimsor "Bejelentkezés a $($global:config.switch) switchre"
                 [Telnet]::LoginCreds()
                 $login = [Telnet]::TestConnection()
 
@@ -428,7 +596,7 @@ Class Telnet
 
     Static SetConnection($switch, $felhasznalonev, $jelszo)
     {
-        [Setting]::switch = $switch
+        $global:config.switch = $switch
         [Telnet]::felhasznalonev = $felhasznalonev
         [Telnet]::jelszo = $jelszo
     }
@@ -443,7 +611,7 @@ Class Telnet
     Static SetSwitch()
     {
         Show-Cimsor "SWITCH BEJELENTKEZÉS"
-        Write-Host "Az alapértelmezett switchet használod ($([Setting]::switch)), vagy megadod kézzel a címet?`nAdd meg a switch IP címét, ha választani szeretnél, vagy üss Entert, ha az alapértelmezettet használnád!"
+        Write-Host "Az alapértelmezett switchet használod ($($global:config.switch)), vagy megadod kézzel a címet?`nAdd meg a switch IP címét, ha választani szeretnél, vagy üss Entert, ha az alapértelmezettet használnád!"
         do
         {
             $kilep = $true
@@ -459,7 +627,7 @@ Class Telnet
                 }
                 if($kilep)
                 {
-                    [Setting]::switch = $valassz
+                    $global:config.switch = $valassz
                 }
             }
         }while(!$kilep)
@@ -469,19 +637,18 @@ Class Telnet
     {
         $login = $false
         Write-Host "`nKísérlet csatlakozásra..."
-        $waittimeorig = [Setting]::waittime
         $logintest = [Telnet]::InvokeCommands("")
         $login = $logintest | Select-String -Pattern "#", ">"
         if (!$login -or !$logintest)
         {
-            $message = "A megadott felhasználónév: $([Telnet]::felhasznalonev), vagy a hozzá tartozó jelszó nem megfelelő, esetleg a(z) $([Setting]::switch) címen nincs elérhető switch"
+            $message = "A megadott felhasználónév: $([Telnet]::felhasznalonev), vagy a hozzá tartozó jelszó nem megfelelő, esetleg a(z) $($global:config.switch) címen nincs elérhető switch"
             Add-Log "[SWITCH KAPCSOLÓDÁSI HIBA] $message"
             Write-Host "$message!" -ForegroundColor Red
             $login = $false
         }
         else
         {
-            Add-Log "[SWITCH SIKERES KAPCSOLÓDÁS] A(z) $([Telnet]::felhasznalonev) sikeresen kapcsolódott a(z) $([Setting]::switch) switchez"
+            Add-Log "[SWITCH SIKERES KAPCSOLÓDÁS] A(z) $([Telnet]::felhasznalonev) sikeresen kapcsolódott a(z) $($global:config.switch) switchez"
             $login = $true
         }
         return $login
@@ -500,7 +667,7 @@ Class Telnet
     
         try
         {
-            $socket = New-Object System.Net.Sockets.TcpClient([Setting]::switch, [Setting]::port)
+            $socket = New-Object System.Net.Sockets.TcpClient($global:config.switch, $global:config.port)
         }
         catch
         {
@@ -514,16 +681,14 @@ Class Telnet
             $buffer = New-Object System.Byte[] 1024
             $encoding = New-Object System.Text.ASCIIEncoding
 
-            $waittime = [Setting]::waittime
-
             foreach ($command in $commands)
             {
                 $writer.WriteLine($command)
                 $writer.Flush()
-                Start-Sleep -Milliseconds $waittime
+                Start-Sleep -Milliseconds $global:config.waittime
             }
     
-            Start-Sleep -Milliseconds $waittime
+            Start-Sleep -Milliseconds $global:config.waittime
     
             while($stream.DataAvailable)
             {
@@ -610,14 +775,14 @@ Class Lekerdezes
         $pinglocal = "ping $($script:local.IPaddress)"
         $pingremote = "ping $($script:remote.IPaddress)"
         [String[]]$parancs = @($pinglocal, $pingremote, $keresesiparancs)
-        $waittimeorig = [Setting]::waittime
+        $waittimeorig = $global:config.waittime
         do
         {
             Write-Host "A(z) $($script:remote.IPaddress) IP című eszköz helyének lekérdezése folyamatban..."
             $this.result = [Telnet]::InvokeCommands($parancs)
             if(!$this.result)
             {
-                $message = "A(z) $($script:remote.IPaddress) című eszköz lekérdezése során a programnak nem sikerült csatlakozni a(z) $([Setting]::switch) IP című switchhez!"
+                $message = "A(z) $($script:remote.IPaddress) című eszköz lekérdezése során a programnak nem sikerült csatlakozni a(z) $($global:config.switch) IP című switchhez!"
                 Add-Log "[KAPCSOLÓDÁSI HIBA] $message"
                 Write-Host $message -ForegroundColor Red
             }
@@ -625,22 +790,22 @@ Class Lekerdezes
             {
                 $this.sikeres = $true
             }
-            if (!$this.Siker() -and $failcount -lt [Setting]::maxhiba)
+            if (!$this.Siker() -and $failcount -lt $global:config.maxhiba)
             {
                 $failcount++
-                $visszamaradt = [Setting]::maxhiba - $failcount
+                $visszamaradt = $global:config.maxhiba - $failcount
                 Write-Host "A(z) $($script:remote.IPaddress) eszköz helyének lekérdezése most nem járt sikerrel. Még $visszamaradt alkalommal újrapróbálkozom!" -ForegroundColor Yellow
-                if ($failcount -eq [Setting]::maxhiba)
+                if ($failcount -eq $global:config.maxhiba)
                 {
-                    $message = "A(z) $($script:remote.IPaddress) eszköz helyének lekérdezése a(z) $([Setting]::switch) IP című switchről időtúllépés miatt nem sikerült"
+                    $message = "A(z) $($script:remote.IPaddress) eszköz helyének lekérdezése a(z) $($global:config.switch) IP című switchről időtúllépés miatt nem sikerült"
                     Write-Host $message -ForegroundColor Red
                     Add-Log "[IDŐTÚLLÉPÉS] $message"
                     #Write-Host $this.result
                 }
-                [Setting]::waittime = [Setting]::waittime + 1000
+                $global:config.waittime = $global:config.waittime + 1000
             }
-        }while (!$this.Siker() -and $failcount -lt [Setting]::maxhiba)
-        [Setting]::waittime = $waittimeorig
+        }while (!$this.Siker() -and $failcount -lt $global:config.maxhiba)
+        $global:config.waittime = $waittimeorig
     }
 
     Feldolgoz()
@@ -799,7 +964,7 @@ function Get-TrueFalse
 {
     param($ertek)
 
-    if ($ertek -eq 1)
+    if ($ertek)
     {
         Write-Host "Bekapcsolva" -ForegroundColor Green
     }
@@ -912,12 +1077,12 @@ Function Test-CSV
 {
     Param($kozeptag)
     $mentohely = ".\Logfiles"
-    $script:csvnev = "$([Setting]::csvnevelotag)-$kozeptag.csv"
-    $script:oldcsvnev = "$([Setting]::csvnevelotag)-$kozeptag-OLD.csv"
+    $script:csvnev = "$($config.csvnevelotag)-$kozeptag.csv"
+    $script:oldcsvnev = "$($config.csvnevelotag)-$kozeptag-OLD.csv"
     $script:csv = ".\Logfiles\$script:csvnev"
     $script:oldcsv = ".\Logfiles\$script:oldcsvnev"
     $script:csvsave = $script:csv
-    $script:csvkimenet = "$mentohely\VÉGEREDMÉNY_$([Setting]::csvnevelotag)_$kozeptag.csv"
+    $script:csvkimenet = "$mentohely\VÉGEREDMÉNY_$($config.csvnevelotag)_$kozeptag.csv"
 
     if (Test-Path $script:oldcsv)
     {
@@ -994,9 +1159,13 @@ function Add-Log
 {
     param ($logtext)
 
-    if($config.log -ne "0") # A config.ini log bejegyzését 0-ra állítva a logolás kikapcsolható
+    if($config.log) # A config.ini log bejegyzését false-ra állítva a logolás kikapcsolható
     {
-        $logtext | Out-File $script:logfajl -Append -Force -Encoding unicode
+        if($config.logtime)
+        {
+            $logtext = "$logtext $([Time]::Stamp())"
+        }
+        $logtext | Out-File $config.logfile -Append -Force -Encoding unicode
     }
 }
 
@@ -1004,19 +1173,7 @@ function Set-Logname
 {
     param($logname)
 
-    $script:logfajl = ".\Logfiles\$logname.log"
-}
-
-function Write-Settings
-{
-    "nevgyujtes = $global:nevgyujtes" | Out-File .\config.ini
-    "log = $global:log" | Out-File .\config.ini -Append
-    "debug = $global:debug" | Out-File .\config.ini -Append
-    "debugip1 = $global:debugip1" | Out-File .\config.ini -Append
-    "debugip2 = $global:debugip2" | Out-File .\config.ini -Append
-    "logonline = $global:logonline" | Out-File .\config.ini -Append
-    "logoffline = $global:logoffline" | Out-File .\config.ini -Append
-    "method = $global:method" | Out-File .\config.ini -Append
+    $script:config.logfile = ".\Logfiles\$logname.log"
 }
 
 # Ezt a függvényt egy másik programomból emeltem át (amelyet a GitHubra is feltöltöttem),
@@ -1085,11 +1242,11 @@ function Get-EgyszeriLekerdezes
 
 # Hasonlóan az Get-DistinguishedName függvényhez, ez is egy másik programból származik
 # Ennek a függvénynek az a feladata, hogy ellenőrzötten bekérje a lekérdezni kívánt OU elérési útját
-function Set-OU
+function Get-OU
 {
     param($bemenet)
     $eredetiou = $bemenet
-    $time = (Get-Date).Adddays(-([Setting]::aktivnapok)) # Csak azokkal foglalkozunk, amik a megadott időn belül voltak bekapcsolva
+    $time = (Get-Date).Adddays(-($config.aktivnapok)) # Csak azokkal foglalkozunk, amik a megadott időn belül voltak bekapcsolva
     do 
     {
         if(!($bemenet)) # Ez az elágazás csak az első (sikertelen) futást követően lép életbe
@@ -1350,18 +1507,18 @@ function Import-ADList
 {
     Show-Cimsor "AD-BÓL VETT GÉPEK LISTÁJÁNAK LEKÉRDEZÉSE"
     Set-Logname "EszkozHely"
-    [Setting]::csvnevelotag = "EszközHely"
+    $config.csvnevelotag = "EszközHely"
     $script:local = [Local]::New()
     $sajateszkoz = $false
     $ADgeplista = $false
 
     Write-Host "Kérlek szúrd be a lekérdezni kívánt OU elérési útját!"
     $valaszt = Read-Host -Prompt "Válassz"
-    $ADgeplista = Set-OU $valaszt
+    $ADgeplista = Get-OU $valaszt
     if($ADgeplista)
     {
         [Import]::AD($ADgeplista) # Meghívjuk az importáló osztály ADból imortálást végző statikus metódusát
-        Add-Log "[LEKÉRDEZÉS MEGKEZDVE] A(z) $($script:ounev) OU gépeinek helyének lekérdezése megkezdődött: $([Time]::Stamp())-kor"
+        Add-Log "[LEKÉRDEZÉS MEGKEZDVE] A(z) $($script:ounev) OU gépeinek helyének lekérdezése megkezdődött:"
     }
     [Telnet]::Login()
 
@@ -1463,7 +1620,7 @@ function Import-ADList
             Write-Host "A FOLYAMAT FOLYTATÓDIK"
         }
     }while ($script:elemszam -ne $keszdb) # Ha a lista és kész gépek elemszáma megegyezik, a futás végetért
-    $message = "A(z) $($script.OUnev) OU számítógépeinek helyének lekérdezése sikeresen befejeződött $([Time]::Stamp())-kor"
+    $message = "A(z) $($script.OUnev) OU számítógépeinek helyének lekérdezése sikeresen befejeződött:"
     Add-Log "[FOLYAMAT VÉGE] $message"
     Write-Host "$message`nA program egy billetnyű leütését követően visszatér a főmenübe."
     Read-Host
@@ -1473,15 +1630,15 @@ function Import-IPRange
 {
     Show-Cimsor "MEGADOTT IP TARTOMÁNY ESZKÖZEI HELYÉNEK LEKÉRDEZÉSE"
     Set-Logname "EszkozHely"
-    [Setting]::csvnevelotag = "EszközHely"
+    $config.csvnevelotag = "EszközHely"
     $script:local = [Local]::New()
     $ipcim = Import-IPaddresses
-    [Setting]::csvnevelotag = "IP_TartományEszközei"
+    $config.csvnevelotag = "IP_TartományEszközei"
     Test-CSV "$($elsoIP.ToString())-$($utolsoIP.ToString())"
 
     Show-Cimsor "A(Z) $($elsoIP.ToString()) - $($utolsoIP.ToString()) IP TARTOMÁNY ESZKÖZEI HELYÉNEK LEKÉRDEZÉSE"
 
-    Add-Log "[LEKÉRDEZÉS MEGKEZDVE] A(z) $($elsoIP.ToString())-$($utolsoIP.ToString())) IP tartomány eszközei helyének lekérdezése megkezdődött: $([Time]::Stamp())-kor"
+    Add-Log "[LEKÉRDEZÉS MEGKEZDVE] A(z) $($elsoIP.ToString())-$($utolsoIP.ToString())) IP tartomány eszközei helyének lekérdezése megkezdődött:"
     [Telnet]::Login()
 
     # Itt kezdődik a függvény munkaciklusa. Ezen belül történik a lekérdezést végző függvény meghívása
@@ -1542,7 +1699,7 @@ function Import-IPRange
         }
     }
 
-    $message = "A(z) $($elsoIP.ToString()) - $($utolsoIP.ToString()) IP tartomány eszközei helyének lekérdezése sikeresen befejeződött $([Time]::Stamp())-kor"
+    $message = "A(z) $($elsoIP.ToString()) - $($utolsoIP.ToString()) IP tartomány eszközei helyének lekérdezése sikeresen befejeződött:"
     Add-Log "[FOLYAMAT VÉGE] $message"
     Write-Host "$message`nA program egy billetnyű leütését követően visszatér a főmenübe."
     Read-Host
@@ -1554,7 +1711,7 @@ function Get-IPaddressesState
     Set-Logname "EszkozAllapot"
     $eszkozok = Import-IPaddresses
     $time = [Time]::New()
-    [Setting]::csvnevelotag = "IP_Címlista"
+    $config.csvnevelotag = "IP_Címlista"
     $jelenelem = 1
     Test-CSV "$($elsoIP.ToString())-$($utolsoIP.ToString())_$($time.FileName())"
 
@@ -1583,7 +1740,7 @@ function Get-IPaddressesState
         $eszkoz.Online = $eszkoz.EszkozAllapot()
         $jelenelem++
         Write-Host "`r$($eszkoz.IPaddress): Állapota: $($eszkoz.Online)$neve                  "
-        Add-Log "[ESZKÖZ ÁLLAPOT] $($eszkoz.IPaddress): Állapota: $($eszkoz.Online)$neve Idő: $([Time]::Stamp())"
+        Add-Log "[ESZKÖZ ÁLLAPOT] $($eszkoz.IPaddress): Állapota: $($eszkoz.Online)$neve Idő:"
         if(($logonline -eq 1) -and ($logoffline -eq 1))
         {
             $eszkoz | export-csv -encoding UTF8 -path $script:csvkimenet -NoTypeInformation -Append -Force -Delimiter ";"
@@ -1603,11 +1760,11 @@ function Get-ADcomputersState
 {
     Show-Cimsor "AD OU PILLANATYNI ÁLLAPOTÁNAK LEKÉRDEZÉSE"
     Set-Logname "EszkozAllapot"
-    [Setting]::csvnevelotag = "AD_GépÁllapot"
+    $config.csvnevelotag = "AD_GépÁllapot"
 
     Write-Host "Kérlek szúrd be a lekérdezni kívánt OU elérési útját!"
     $valaszt = Read-Host -Prompt "Válassz"
-    $ADgeplista = Set-OU $valaszt
+    $ADgeplista = Get-OU $valaszt
     Show-Cimsor "A(Z) $($script:ounev) OU GÉPEINEK LEKÉRDEZÉSE"
     [Import]::AD($ADgeplista) # Meghívjuk az importáló osztály ADból imortálást végző statikus metódusát
     $jelenelem = 1
@@ -1626,7 +1783,7 @@ function Get-ADcomputersState
         $eszkoz.Online = $eszkoz.EszkozAllapot()
         $jelenelem++
         Write-Host "`r$($eszkoz.Eszkoznev): Állapota: $($eszkoz.Online)                  "
-        Add-Log "[ESZKÖZ ÁLLAPOT] $($eszkoz.Eszkoznev): Állapota: $($eszkoz.Online) Idő: $([Time]::Stamp())"
+        Add-Log "[ESZKÖZ ÁLLAPOT] $($eszkoz.Eszkoznev): Állapota: $($eszkoz.Online) Idő:"
         if(($logonline -eq 1) -and ($logoffline -eq 1))
         {
             $eszkoz | export-csv -encoding UTF8 -path $script:csvkimenet -NoTypeInformation -Append -Force -Delimiter ";"
@@ -1642,79 +1799,11 @@ function Get-ADcomputersState
     }  
 }
 
-function Set-Settings
-{
-    do
-    {
-        Show-Cimsor "BEÁLLÍTÁSOK"
-
-        $csvsavemode = 0
-        if (($logonline -eq 1) -and ($logoffline -eq 1))
-        {
-            $optlogonline = "Az Online és Offline gépek is mentésre kerülnek"
-            $csvsavemode = 1
-        }
-        elseif (($logonline -eq 1) -and ($logoffline -eq 0))
-        {
-            $optlogonline = "Csak az Online gépek kerülnek mentésre"
-            $csvsavemode = 2
-        }
-        elseif (($logonline -eq 0) -and ($logoffline -eq 1))
-        {
-            $optlogonline = "Csak az Offline gépek kerülnek mentésre"
-            $csvsavemode = 3
-        }
-        else
-        {
-            $optlogonline = "Az eredmények nem kerülnek mentésre"
-            $csvsavemode = 0
-        }
-
-        if ($method -eq 2)
-        {
-            $optmethod = "Sokkal lassabb, de valamivel megbízhatóbb"
-        }
-        else
-        {
-            $optmethod = "Gyors, de néha ad fals negatív eredményt"
-        }
-
-        Write-Host "(1) Az online eszközök nevének gyűjtése (bizonyos esetekben jelentősen lassíthatja a folyamatot): " -NoNewline
-        Get-TrueFalse $nevgyujtes
-        Write-Host "(2) Debug mód: " -NoNewline
-        Get-TrueFalse $debug
-        Write-Host "(3) Minden eredmény logolása: " -NoNewline
-        Get-TrueFalse $log
-        Write-Host "(4) A folyamat során készülő CSV fájlba: $optlogonline"
-        Write-Host "(5) A lekérdezés módja: $optmethod"
-        Write-Host "(K) Beállítások véglegesítése"
-        Write-Host "A beállítások megváltoztatásához használd a mellettük látható számbillentyűket!"
-        $valasztas = Get-Valasztas ("1", "2", "3", "4", "5", "K")
-
-        switch ($valasztas)
-        {
-            1 { if ($nevgyujtes -eq 1) { $global:nevgyujtes = 0} else { $global:nevgyujtes = 1} }
-            2 { if ($debug -eq 1) { $global:debug = 0} else { $global:debug = 1} }
-            3 { if ($log -eq 1) { $global:log = 0} else { $global:log = 1} }
-            4 { if ($csvsavemode -lt 3) { $csvsavemode++ } else { $csvsavemode = 0 } switch ($csvsavemode) { 1 { $global:logonline = 1; $global:logoffline = 1 } 2 { $global:logonline = 1; $global:logoffline = 0 } 3 { $global:logonline = 0; $global:logoffline = 1 } 0 { $global:logonline = 0; $global:logoffline = 0 }}}
-            5 { if ($method -eq 1) { $global:method = 2} else { $global:method = 1} }
-            default {}
-        }
-    } while ($valasztas -ne "K")
-
-    Write-Host "Szeretnéd menteni a beállításokat, hogy legközelebb is ezeket használja a program?"
-    Write-Host "Üss I-t, ha igen, N-t, ha nem."
-    $valasztas = Get-YesNo
-
-    if($valasztas -eq "I")
-    {
-        Write-Settings
-    }
-}
-
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 #-#-#                                   BELÉPÉSI PONT                                         #-#-#
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+
+$global:config = [Setting]::New()
 
 for(;;)
 {
@@ -1737,7 +1826,7 @@ for(;;)
         4 { Import-IPRange }
         5 { Get-ADcomputersState }
         6 { Get-IPaddressesState }
-        S { Set-Settings }
+        S { $config.ModifyConfig() }
         K { Exit }
         Default {}
     }
