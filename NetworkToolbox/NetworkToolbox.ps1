@@ -411,10 +411,25 @@ Class Local
         $this.Gepnev = HOSTNAME.EXE
         $gateway = (Get-NetRoute -DestinationPrefix "0.0.0.0/0").NextHop
         $getMAC = get-wmiobject -class "win32_networkadapterconfiguration" | Where-Object {$_.DefaultIPGateway -Match $gateway}
+        $this.FinalizeConstruct($getMAC)
+        $This.Mask = (Get-NetIPAddress | Where-Object {$_.IPAddress -match $this.IPAddress -and $_.AddressFamily -match "IPv4"} ).PrefixLength
+    }
+
+    Local($remotegepnev)
+    {
+        $this.Gepnev = $remotegepnev
+        $gateway = Invoke-Command -ComputerName $this.Gepnev -ScriptBlock { (Get-NetRoute -DestinationPrefix "0.0.0.0/0").NextHop }
+        $getMAC = get-wmiobject -class "win32_networkadapterconfiguration" -ComputerName $this.Gepnev | Where-Object {$_.DefaultIPGateway -Match $gateway}
+        $this.FinalizeConstruct($getMAC)
+        $masktemp = Invoke-Command -ComputerName $this.Gepnev -ScriptBlock { (Get-NetIPAddress | Where-Object {$_.IPAddress -match $this.IPAddress -and $_.AddressFamily -match "IPv4"} ).PrefixLength }
+        $this.Mask = $masktemp[0]
+    }
+
+    FinalizeConstruct($getMAC)
+    {
         $kimenet = ($getMAC.MACAddress).Split(":")
         $this.MACaddress = "$($kimenet[0])$($kimenet[1]).$($kimenet[2])$($kimenet[3]).$($kimenet[4])$($kimenet[5])"
-        $this.IPaddress = (($getMAC.IPAddress).Split(","))[0]
-        $This.Mask = (Get-NetIPAddress | Where-Object {$_.IPAddress -match $getMAC.IPAddress[0] -and $_.AddressFamily -match "IPv4"} ).PrefixLength
+        $this.IPaddress = (($getMAC.IPAddress).Split(","))[0]  
     }
 
     [bool]Kesze()
@@ -563,6 +578,21 @@ Class IPcim
     [string]ToString()
     {
         return "$($this.tag1).$($this.tag2).$($this.tag3).$($this.tag4)"
+    }
+}
+
+Class MasVLAN
+{
+    $subnet
+    $mask
+    $tracegep
+
+    MasVLAN($tracegep)
+    {
+        $this.tracegep = $tracegep
+        $this.mask = $tracegep.Mask
+        $vlan = ($tracegep.IPAddress).Split(".")
+        $this.subnet = "$($vlan[0]).$($vlan[1]).$($vlan[2])"
     }
 }
 
@@ -1243,7 +1273,7 @@ function Get-EgyszeriLekerdezes
 #####
 ##
 ##  Összetett kisegítőfüggvények. Ezek a függvényeket összetettebb,
-##  vagy akár egyszerr több feladatokat látnak el
+##  vagy akár egyszerre több feladatokat látnak el
 ##
 #####
 
@@ -1295,6 +1325,13 @@ function Get-OU
     {
         return $false
     }
+}
+
+function Get-RemoteTrace
+{
+    param($gepnev)
+
+    $newrem = [Local]::New($gepnev)
 }
 
 function Get-IPRange
