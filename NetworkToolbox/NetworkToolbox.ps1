@@ -1741,19 +1741,21 @@ function Get-IPaddressesState
         $jelenelem++
         Write-Host "`r$($eszkoz.IPaddress): Állapota: $($eszkoz.Online)$neve                  "
         Add-Log "[ESZKÖZ ÁLLAPOT] $($eszkoz.IPaddress): Állapota: $($eszkoz.Online)$neve Idő:"
-        if(($logonline -eq 1) -and ($logoffline -eq 1))
+        if(($config.logonline) -and ($config.logoffline))
         {
             $eszkoz | export-csv -encoding UTF8 -path $script:csvkimenet -NoTypeInformation -Append -Force -Delimiter ";"
         }
-        elseif(($logonline -eq 1) -and $online)
+        elseif(($config.logonline) -and $online)
         {
             $eszkoz | export-csv -encoding UTF8 -path $script:csvkimenet -NoTypeInformation -Append -Force -Delimiter ";"
         }
-        elseif(($logoffline -eq 1) -and !$online)
+        elseif(($config.logoffline) -and !$online)
         {
             $eszkoz | export-csv -encoding UTF8 -path $script:csvkimenet -NoTypeInformation -Append -Force -Delimiter ";"
         }
     }
+    Write-Host "A(z) $($elsoIP.ToString()) - $($utolsoIP.ToString()) IP tartomány lekérdezése befejeződött. Egy billentyű leütésével visszatérhetsz a főmenübe"
+    Read-Host
 }
 
 function Get-ADcomputersState
@@ -1766,12 +1768,12 @@ function Get-ADcomputersState
     $valaszt = Read-Host -Prompt "Válassz"
     $ADgeplista = Get-OU $valaszt
     Show-Cimsor "A(Z) $($script:ounev) OU GÉPEINEK LEKÉRDEZÉSE"
-    [Import]::AD($ADgeplista) # Meghívjuk az importáló osztály ADból imortálást végző statikus metódusát
     $jelenelem = 1
 
-    foreach ($eszkoz in $eszkozok)
+    foreach ($gep in $ADgeplista)
     {
-        Write-Host "$($eszkoz.Eszkoznev) kapcsolatának ellenőrzése $(($jelenelem/$eszkozok.Length))" -NoNewline
+        $eszkoz = [Remote]::New($gep.Name, $false)
+        Write-Host "$($eszkoz.Eszkoznev) kapcsolatának ellenőrzése ($jelenelem/$($ADgeplista.Length))" -NoNewline
         switch ($method)
         {
             1 { $online = Test-Ping $eszkoz.Eszkoznev }
@@ -1784,19 +1786,21 @@ function Get-ADcomputersState
         $jelenelem++
         Write-Host "`r$($eszkoz.Eszkoznev): Állapota: $($eszkoz.Online)                  "
         Add-Log "[ESZKÖZ ÁLLAPOT] $($eszkoz.Eszkoznev): Állapota: $($eszkoz.Online) Idő:"
-        if(($logonline -eq 1) -and ($logoffline -eq 1))
+        if(($config.logonline) -and ($config.logoffline))
         {
             $eszkoz | export-csv -encoding UTF8 -path $script:csvkimenet -NoTypeInformation -Append -Force -Delimiter ";"
         }
-        elseif(($logonline -eq 1) -and $online)
+        elseif(($config.logonline) -and $online)
         {
             $eszkoz | export-csv -encoding UTF8 -path $script:csvkimenet -NoTypeInformation -Append -Force -Delimiter ";"
         }
-        elseif(($logoffline -eq 1) -and !$online)
+        elseif(($config.logoffline) -and !$online)
         {
             $eszkoz | export-csv -encoding UTF8 -path $script:csvkimenet -NoTypeInformation -Append -Force -Delimiter ";"
         }
-    }  
+    }
+    Write-Host "A(z) $($script:ounev) OU gépeinek lekérdezése befejeződött. Egy billentyű leütésével visszatérhetsz a főmenübe"
+    Read-Host
 }
 
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
