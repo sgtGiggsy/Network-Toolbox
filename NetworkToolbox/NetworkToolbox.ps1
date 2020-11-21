@@ -374,7 +374,7 @@ Class Eszkoz
     {
         try
         {
-            $this.SwitchIP = $switchIP.Trim("(", ")")
+            $this.SwitchIP = $switchIP.Trim("(", ")", "[", "].", ".")
         }
         catch
         {
@@ -405,6 +405,7 @@ Class Local
     $SwitchNev
     $SwitchIP
     $Port
+    $Megbizhato
 
     Local()
     {
@@ -418,6 +419,7 @@ Class Local
     Local($remotegepnev)
     {
         $this.Gepnev = $remotegepnev
+        $this.Megbizhato = $true
         try
         {
             $ErrorActionPreference = "Stop"
@@ -435,7 +437,6 @@ Class Local
                 $message = "A(z) $($this.Gepnev) számítógép MACAddressének lekérése időtúllépés miatt sikertelen"
                 Add-Log "[KAPCSOLAT IDŐTÚLLÉPÉS] $message"
                 Write-Host "$message!" -ForegroundColor Red
-                Throw $message
             }
         }
         catch [System.Management.Automation.Remoting.PSRemotingTransportException]
@@ -576,7 +577,6 @@ Class Remote
                 $message = "A(z) $($this.Eszkoznev) számítógép MACAddressének lekérése időtúllépés miatt sikertelen"
                 Add-Log "[KAPCSOLAT IDŐTÚLLÉPÉS] $message"
                 Write-Host "$message!" -ForegroundColor Red
-                Throw
             }
         }
         catch [System.Management.Automation.Remoting.PSRemotingTransportException]
@@ -710,7 +710,7 @@ Class Telnet
     Static Login()
     {
         if (![Telnet]::felhasznalonev -or ![Telnet]::jelszo)
-            {
+        {
             $login = $false
             do
             {
@@ -913,12 +913,20 @@ Class Lekerdezes
                 Add-Log "[KAPCSOLÓDÁSI HIBA] $message"
                 Write-Host $message -ForegroundColor Red
             }
-            elseif ($this.result | Select-String -Pattern "found on")
+            elseif ($this.result | Select-String -Pattern "Layer 2 trace completed")
             {
+                Show-Debug "Az útvonal lekérése sikeres"
                 $this.sikeres = $true
             }
-            if (!$this.Siker() -and $failcount -lt $global:config.maxhiba)
+            if ($this.result | Select-String -Pattern "Layer2 trace aborted")
             {
+                Show-Debug "Az útvonal lekérése sikertelen nem próbálkozom újra"
+                $this.sikeres = $false
+                $failcount = $global:config.maxhiba
+            }
+            elseif (!$this.Siker() -and $failcount -lt $global:config.maxhiba)
+            {
+                Show-Debug "Az útvonal lekérése sikertelen, újrapróbálkozom hosszabb idővel, ami jelenleg: $($global:config.waittime) ezredmásodperc"
                 $failcount++
                 $visszamaradt = $global:config.maxhiba - $failcount
                 Write-Host "A(z) $($remote.IPaddress) eszköz helyének lekérdezése most nem járt sikerrel. Még $visszamaradt alkalommal újrapróbálkozom!" -ForegroundColor Yellow
@@ -936,6 +944,10 @@ Class Lekerdezes
         if($this.Siker())
         {
             $this.Feldolgoz()
+        }
+        else
+        {
+            $this.Hibakeres()
         }
     }
 
@@ -955,38 +967,54 @@ Class Lekerdezes
                 $eszkozhely = $i
             }
         }
-        if($this.remote.IPaddress -match "10.59.58")
+        
+        $utolsosor = $this.sorok[$eszkozhely].Split(" ")
+        $this.switchnev = $utolsosor[1]
+        $this.switchip = $utolsosor[2]
+        $this.eszkozport = $utolsosor[6]
+        if(!$this.local.Kesze())
         {
-            Write-Host $this.Result -ForegroundColor Green
-            Write-Host $this.sorok[$eszkozhely] -ForegroundColor Green
-            Add-Log $this.result
-            #Read-Host
+            $elsosor = $this.sorok[$sajateszkoz].Split(" ")
+            $this.local.switchnev = $elsosor[1]
+            $this.local.switchip = $elsosor[2]
+            $this.local.port = $elsosor[4]
         }
-        if($eszkozhely -ne 0)
+        $this.Log()
+    }
+
+    Hibakeres()
+    {
+        Show-Debug "Eredmény hibakeresés"
+        $this.local.Megbizhato = $false
+        if($this.result | Select-String -Pattern "Unable to locate port for")
         {
-            $utolsosor = $this.sorok[$eszkozhely].Split(" ")
-            $this.switchnev = $utolsosor[1]
-            $this.switchip = $utolsosor[2]
-            $this.eszkozport = $utolsosor[6]
-            if(!$this.local.Kesze())
+            Show-Debug "Unable to locate port hiba"
+            $this.sorok = $this.result.Split("`r`n")
+            foreach ($sor in $this.sorok)
             {
-                $elsosor = $this.sorok[$sajateszkoz].Split(" ")
-                $this.local.switchnev = $elsosor[1]
-                $this.local.switchip = $elsosor[2]
-                $this.local.port = $elsosor[4]
+                if ($sor | Select-String -Pattern "Unable to locate port for")
+                {
+                    Show-Debug "Az eszköz megtalálva"
+                    $eredmeny = $sor.Split(" ")
+                    $this.switchnev = $eredmeny[8]
+                    $this.switchip = $eredmeny[9]
+                    $message = "A(z) $($this.remote.IPaddress) eszköz a $($this.switchnev) switchen található, a pontos port lekérése hibába ütközött"
+                    Add-Log "[ÚTVONAL HIBA] $message"
+                    Write-Host $message -ForegroundColor Yellow
+                    Break
+                }
             }
-            $this.Log()
+        }
+        elseif ($this.result | Select-String -Pattern "Success rate is 0 percent")
+        {
+            $message = "A lekérdezni kívánt, vagy a kiinduló gép nem volt elérhető"
+            Add-Log "[ESZKÖZ ELÉRHETETLEN] $message"
+            Write-Host "$message!" -ForegroundColor Red
         }
         else
         {
-            if($this.result | Select-String -Pattern "layer 2 trace aborted")
-            {
-                Write-Host "$($this.local.Gepnev) Hibás forrás switch" -ForegroundColor Blue
-            }
-            $this.sikeres = $false
-            $message = "A forrás, vagy a céleszköz nem Cisco kompatibilis Switchen található"
-            Write-Host "$message!" -ForegroundColor Red
-            Add-Log "[SWITCH KOMPATIBILITÁSI HIBA] $message"
+            Show-Debug $this.result
+            Add-Log $this.result
         }
     }
 
@@ -1133,6 +1161,11 @@ function Show-Cimsor
     Write-Host "HÁLÓZATKEZELÉSI SVÁJCIBICSKA`n`n$almenu`n`n"
 }
 
+function Clear-Line
+{
+    Write-Host "`r                                                                                           "    
+}
+
 #####
 ##
 ##  Egyszerűbb függvények egyetlen egyszerűbb feladat ellátására
@@ -1226,6 +1259,7 @@ function Test-Ping
         return $false
     }
 }
+
 Function Test-CSV
 {
     Param($kozeptag)
@@ -1258,7 +1292,27 @@ Function Test-CSV
     }
 }
 
-function Test-IfSameSubnet
+function Sync-CSV
+{
+    param($eszkoz)
+
+    if(!(Test-Path $script:csvkimenet) -or !(Select-String -Path $script:csvkimenet -Pattern $eszkoz.IPaddress))
+    {
+        $eszkoz | Export-Csv -encoding UTF8 -path $script:csvkimenet -NoTypeInformation -Append -Force -Delimiter ";"
+    }
+    elseif(Select-String -Path $script:csvkimenet -Pattern $eszkoz.IPaddress)
+    {
+        $eszkozok = Import-Csv $script:csvkimenet
+        $id = [Array]::IndexOf($eszkozok.IPaddress,$eszkoz.IPaddress)
+        if(!$eszkozok[$id].Port)
+        {
+            $eszkozok[$id].Port = $eszkoz.Port
+            $eszkozok | Export-Csv -encoding UTF8 -path $script:csvkimenet -NoTypeInformation -Append -Force -Delimiter ";"
+        }
+    }
+}
+
+function Compare-Subnets
 {
     param($local, $remote, $subnet)
 
@@ -1328,11 +1382,21 @@ function Set-Logname
     $script:config.logfile = ".\Logfiles\$logname.log"
 }
 
+function Show-Debug
+{
+    param($message)
+
+    if($config.debug)
+    {
+        Write-Host "[DEBUG] $message" -ForegroundColor Blue
+    }
+}
+
 # Ezt a függvényt egy másik programomból emeltem át (amelyet a GitHubra is feltöltöttem),
 # így a kommentek angolul vannak benne.
 # A feladata, hogy a normál könyvtárjellegű OU nevet lefordítsa a tartományon belüli
 # kereséshez használt distinguishedname formátumra.
-function Get-DistinguishedName
+function ConvertTo-DistinguishedName
 {
     param($bemenet) #OU name in the form you can find it in ADUC
     $kimenet = $bemenet.Split("/") #Splitting the OU name by slash characters
@@ -1395,7 +1459,7 @@ function Get-EgyszeriLekerdezes
 ##
 #####
 
-# Hasonlóan az Get-DistinguishedName függvényhez, ez is egy másik programból származik
+# Hasonlóan az ConvertTo-DistinguishedName függvényhez, ez is egy másik programból származik
 # Ennek a függvénynek az a feladata, hogy ellenőrzötten bekérje a lekérdezni kívánt OU elérési útját
 function Get-OU
 {
@@ -1414,7 +1478,7 @@ function Get-OU
         $bemenet = $true
         if($eredetiou) # Ebbe az elágazásba akkor lépünk be, ha beírtunk bármit az előző elágazás során
         {
-            $ou = Get-DistinguishedName $eredetiou
+            $ou = ConvertTo-DistinguishedName $eredetiou
             $script:usecsv = Test-CSV $Script:ounev # Teszteljük, hogy korábban futtatuk-e már az adott OU-n ugyanezt a folyamatot
             if(!($script:usecsv))
             {
@@ -1445,7 +1509,7 @@ function Get-OU
     }
 }
 
-function Get-IPRange
+function Import-IPRange
 {
     param ($elsoIP, $utolsoIP, $elsokihagyott, $utolsokihagyott)
 
@@ -1522,6 +1586,68 @@ function Get-IPRange
     return $eszkoz
 }
 
+function Get-Local
+{
+    param($local, $remote, $eszkoz, $i)
+
+    Show-Debug "Get-Local függvény meghívva"
+    if (!(Compare-Subnets $local.IPaddress $remote.IPaddress $local.Mask))
+    {
+        Show-Debug "A helyi, és távoli eszköz nem egy subneten van"
+        if (($script:diffsubnetek.Length -lt 1) -and $remote.MACaddress)
+        {
+            Show-Debug "Első új subnet, új távoli kiinduló eszközzel"
+            $script:remotelocal.Add([Local]::New($remote.Eszkoznev)) > $null
+            $script:diffsubnetek.Add([MasVLAN]::New($script:remotelocal[0])) > $null
+            $script:pinggepids.Add($i) > $null
+            $eszkoz.SetIP($script:remotelocal[0].IPaddress)
+            $localtouse = $script:remotelocal[0]
+        }
+        elseif ($remote.MACaddress)
+        {
+            $createnew = $true
+            Show-Debug "A távoli eszköz MAC címe ismert"
+            foreach ($subnet in $script:diffsubnetek)
+            {
+                if ($remote.IPaddress -match $subnet.subnet)
+                {
+                    if($subnet.tracegep.Megbizhato)    
+                    {
+                        Show-Debug "Használni kívánt subnet kiválasztva"
+                        $localtouse = $subnet.tracegep
+                        $createnew = $false
+                        Break
+                    }
+                    else
+                    {
+                        Show-Debug "Meglévő subnet, traceeléshez használt gép lecserélése"
+                        $script:remotelocal.Add([Local]::New($remote.Eszkoznev)) > $null
+                        $subnet.tracegep = $script:remotelocal[-1]
+                        $eszkoz.SetIP($script:remotelocal[-1].IPaddress)
+                        $pinggepids.Add($i) > $null
+                        $localtouse = $remotelocal[-1]
+                    }
+                }
+            }
+            if ($createnew)
+            {
+                Show-Debug "Új subnet, új távoli kiinduló eszközzel"
+                $script:remotelocal.Add([Local]::New($remote.Eszkoznev)) > $null
+                $script:diffsubnetek.Add([MasVLAN]::New($script:remotelocal[-1])) > $null
+                $eszkoz.SetIP($script:remotelocal[-1].IPaddress)
+                $pinggepids.Add($i) > $null
+                $localtouse = $remotelocal[-1]
+            }
+        }
+    }
+    else
+    {
+        Show-Debug "A helyi, és elérni kívánt eszköz egy subneten van"
+        $localtouse = $local
+    }
+    return $localtouse
+}
+
 function Compare-IPs
 {
     param ($IP1, $IP2)
@@ -1568,9 +1694,9 @@ function Import-IPaddresses
             $script:elsoIP = New-Object IPcim(Read-Host -Prompt "Első IP cím")
             Write-Host "Kérlek add meg a lekérdezni kívánt IP tartomány utolsó IP címét!"
             $script:utolsoIP = New-Object IPcim(Read-Host -Prompt "Utolsó IP cím")
-            Write-Host "Szeretnél kihagyni egy megadott tartományt a két IP cím között?`nAdd meg a kihagyni kívánt tartomány also IP címét, ha igen, üss Entert, ha nem!"
+            Write-Host "Szeretnél kihagyni egy megadott tartományt a két IP cím között?`nAdd meg a kihagyni kívánt tartomány első IP címét, ha igen, üss Entert, ha nem!"
             $valassz = Read-Host -Prompt "Válassz"
-            if($valassz)
+            if($valassz -and ($valassz -match $script:config.IPpattern))
             {
                 $script:elsokihagyott = New-Object IPcim($valassz)
                 Write-Host "Kérlek add meg az utolsó kihagyni kívánt IP címet!"
@@ -1629,14 +1755,51 @@ function Import-IPaddresses
     }while(!$endloop)
     if($script:elsokihagyott)
     {
-        $eszkozok = Get-IPRange $elsoIP $utolsoIP $script:elsokihagyott $script:utolsokihagyott
+        $eszkozok = Import-IPRange $elsoIP $utolsoIP $script:elsokihagyott $script:utolsokihagyott
     }
     else
     {
-        $eszkozok = Get-IPRange $elsoIP $utolsoIP
+        $eszkozok = Import-IPRange $elsoIP $utolsoIP
     }
 
     return $eszkozok
+}
+
+function Out-LocalToUse
+{
+    param($eszkoz, $localtouse)
+
+    Show-Debug "A kiinduló eszköz adatainak kitöltése"
+    $eszkoz.SetSwitchNev($localtouse.SwitchNev)
+    $eszkoz.SetSwitchIP($localtouse.SwitchIP)
+    $eszkoz.SetPort($localtouse.Port)
+    $eszkoz.SetIP($localtouse.IPaddress)
+    $eszkoz.SetMAC($localtouse.MACaddress)
+    $eszkoz.SetFelhasznalo()
+    if(!(Select-String -Path $script:csvkimenet -Pattern $eszkoz.Eszkoznev))
+    {
+        Show-Debug "A kiinduló eszköz adatainak fájlba írása"
+        Sync-CSV $eszkoz
+    }
+    $keszdb++
+}
+
+function Out-PingResult
+{
+    param ($eszkoz)
+
+    if(($config.logonline) -and ($config.logoffline))
+    {
+        $eszkoz | export-csv -encoding UTF8 -path $script:csvkimenet -NoTypeInformation -Append -Force -Delimiter ";"
+    }
+    elseif(($config.logonline) -and $online)
+    {
+        $eszkoz | export-csv -encoding UTF8 -path $script:csvkimenet -NoTypeInformation -Append -Force -Delimiter ";"
+    }
+    elseif(($config.logoffline) -and !$online)
+    {
+        $eszkoz | export-csv -encoding UTF8 -path $script:csvkimenet -NoTypeInformation -Append -Force -Delimiter ";"
+    }
 }
 
 #####
@@ -1645,6 +1808,7 @@ function Import-IPaddresses
 ##
 #####
 
+##### JAVÍTANI !!!! ########
 function Set-Kiiratas
 {
     Show-Cimsor "EGYETLEN ESZKÖZ MEGKERESÉSE"
@@ -1673,7 +1837,8 @@ function Set-ParancsKiiratas
     Write-Host "A továbblépéshez üss Entert!"
     Read-Host
 }
-function Import-ADList
+
+function Get-ADcomputersLocation
 {
     Show-Cimsor "AD-BÓL VETT GÉPEK LISTÁJÁNAK LEKÉRDEZÉSE"
     Set-Logname "EszkozHely"
@@ -1681,9 +1846,9 @@ function Import-ADList
     $local = [Local]::New()
     $sajateszkoz = $false
     $ADgeplista = $false
-    $diffsubnetek = New-Object System.Collections.ArrayList($null)
-    $remotelocal = New-Object System.Collections.ArrayList($null)
-    $pinggepids = New-Object System.Collections.ArrayList($null)
+    $script:remotelocal = New-Object System.Collections.ArrayList($null)
+    $script:pinggepids = New-Object System.Collections.ArrayList($null)
+    $script:diffsubnetek = New-Object System.Collections.ArrayList($null)
     $localtouse = $false
 
     Write-Host "Kérlek szúrd be a lekérdezni kívánt OU elérési útját!"
@@ -1721,97 +1886,44 @@ function Import-ADList
             }
 
             $remote = [Remote]::New($eszkoz[$i].Eszkoznev)
-            if($remote.Elerheto() -and !(Test-IfSameSubnet $local.IPaddress $remote.IPaddress $local.Mask))
+            if($remote.Elerheto())
             {
-                if (($diffsubnetek.Length -lt 1) -and $remote.MACaddress)
-                {
-                    $remotelocal.Add([Local]::New($remote.Eszkoznev)) > $null
-                    $diffsubnetek.Add([MasVLAN]::New($remotelocal[0])) > $null
-                    $pinggepids.Add($i) > $null
-                    $eszkoz[$i].SetIP($remotelocal[0].IPaddress)
-                    $localtouse = $remotelocal[0]
-                }
-                elseif($remote.MACaddress)
-                {
-                    $createnew = $true
-                    foreach ($subnet in $diffsubnetek)
-                    {
-                        if($remote.IPaddress -match $subnet.subnet)
-                        {
-                            $localtouse = $subnet.tracegep
-                            $createnew = $false
-                            Break
-                        }
-                    }
-                    if($createnew)
-                    {
-                        $remotelocal.Add([Local]::New($remote.Eszkoznev)) > $null
-                        $diffsubnetek.Add([MasVLAN]::New($remotelocal[-1])) > $null
-                        $eszkoz[$i].SetIP($remotelocal[-1].IPaddress)
-                        $pinggepids.Add($i) > $null
-                        $localtouse = $remotelocal[-1]
-                    }
-                }
-            }
-            else
-            {
-                $localtouse = $local
-            }
-            if($remote.Elerheto() -and ($remote.IPaddress -ne $localtouse.IPaddress))
-            {
+                $localtouse = Get-Local $local $remote $eszkoz[$i] $i
+                Show-Debug "A távoli eszköz elérhető és nem egyezik meg a kiinduláshoz használt eszközzel"
                 $keresesiparancs = [Parancs]::TraceRT($localtouse, $remote)
+                Show-Debug $keresesiparancs
                 if($keresesiparancs)
                 {
                     $lekerdezes = [Lekerdezes]::New($keresesiparancs, $localtouse, $remote)
                     if($lekerdezes.Siker())
                     {
-                        $lekerdezes.Feldolgoz()
+                        Show-Debug "Lekérdezés sikeres"
                         $lekerdezes.ObjektumKitolto($eszkoz[$i])
                         $eszkoz[$i].SetFelhasznalo()
-                        if(!(Test-Path $script:csvkimenet) -or !(Select-String -Path $script:csvkimenet -Pattern $eszkoz[$i].Eszkoznev))
-                        {
-                            $eszkoz[$i] | export-csv -encoding UTF8 -path $script:csvkimenet -NoTypeInformation -Append -Force -Delimiter ";"
-                        }
+                        Sync-CSV $eszkoz[$i]
                         $keszdb++
                     
                         Write-Host "A(z) $($eszkoz[$i].Eszkoznev) eszköz megtalálva a(z) $($eszkoz[$i].SwitchNev) switch $($eszkoz[$i].Port) portján"
                         $fail = $false
 
-                        if ($sajateszkoz -and !$eszkoz[$sajateszkoz].SwitchIP)
+                        if($sajateszkoz)
                         {
-                            $eszkoz[$sajateszkoz].SetSwitchNev($localtouse.SwitchNev)
-                            $eszkoz[$sajateszkoz].SetSwitchIP($localtouse.SwitchIP)
-                            $eszkoz[$sajateszkoz].SetPort($localtouse.Port)
-                            $eszkoz[$sajateszkoz].SetIP($localtouse.IPaddress)
-                            $eszkoz[$sajateszkoz].SetMAC($localtouse.MACaddress)
-                            $eszkoz[$sajateszkoz].SetFelhasznalo()
-                            if(!(Test-Path $script:csvkimenet) -or !(Select-String -Path $script:csvkimenet -Pattern $eszkoz[$sajateszkoz].Eszkoznev))
-                            {
-                                $eszkoz[$sajateszkoz] | export-csv -encoding UTF8 -path $script:csvkimenet -NoTypeInformation -Append -Force -Delimiter ";"
-                            }
+                            Out-LocalToUse $eszkoz[$sajateszkoz] $localtouse
                             $keszdb++
+                            $sajateszkoz = $false
                         }
-                        if($localtouse.IPaddress -ne $local.IPaddress)
+                        elseif ($localtouse -ne $local)
                         {
                             foreach($subnet in $diffsubnetek)
                             {
-                                if($remote.IPaddress -match $subnet.subnet)
+                                if($localtouse.IPaddress -match $subnet.subnet)
                                 {
-                                    foreach ($id in $pinggepids)
+                                    foreach ($id in $script:pinggepids)
                                     {
-                                        if(($eszkoz[$id].IPaddress -match $subnet.subnet) -and !$eszkoz[$id].SwitchIP)
+                                        if ($eszkoz[$id].IPaddress -match $subnet.subnet)
                                         {
-                                            Write-Host "$($subnet.subnet) helyi eszközének hozzáadása "
-                                            $eszkoz[$id].SetSwitchNev($localtouse.SwitchNev)
-                                            $eszkoz[$id].SetSwitchIP($localtouse.SwitchIP)
-                                            $eszkoz[$id].SetPort($localtouse.Port)
-                                            $eszkoz[$id].SetIP($localtouse.IPaddress)
-                                            $eszkoz[$id].SetMAC($localtouse.MACaddress)
-                                            $eszkoz[$id].SetFelhasznalo()
-                                            if(!(Test-Path $script:csvkimenet) -or !(Select-String -Path $script:csvkimenet -Pattern $eszkoz[$sajateszkoz].Eszkoznev))
-                                            {
-                                                $eszkoz[$id] | export-csv -encoding UTF8 -path $script:csvkimenet -NoTypeInformation -Append -Force -Delimiter ";"
-                                            }
+                                            Out-LocalToUse $eszkoz[$id] $localtouse
+                                            $script:pinggepids.Remove($id)
                                             $keszdb++
                                             Break
                                         }
@@ -1821,11 +1933,19 @@ function Import-ADList
                             }
                         }
                     }
+                    elseif ($lekerdezes.switchnev)
+                    {
+                        Show-Debug "Adatok részleges kitöltése"
+                        $lekerdezes.ObjektumKitolto($eszkoz[$i])
+                        $eszkoz[$i].SetFelhasznalo()
+                        Sync-CSV $eszkoz[$i]
+                    }
                 }
             }
 
-            if($fail -and !($remote.Elerheto()))
+            if($fail)
             {
+                Show-Debug "A lekérdezés nem, vagy csak részben sikerült. Az $($eszkoz[$i].Eszkoznev) géppel újraprobálkozom később."
                 $eszkoz[$i] | export-csv -encoding UTF8 -path $script:csvsave -NoTypeInformation -Append -Force -Delimiter ";"
             }
         }
@@ -1854,11 +1974,11 @@ function Import-ADList
             for ($i = 0; $i -lt $config.retrytime; $i++)
             {
                 $remaining = $config.retrytime - $i
-                Write-Host "`r                                                        " -NoNewline
+                Clear-Line
                 Write-Host "`rA folyamat folytatódik $remaining másodperc múlva." -NoNewline
                 Start-Sleep -s 1
             }
-            Write-Host "`r                                                                  "
+            Clear-Line
             Write-Host "A FOLYAMAT FOLYTATÓDIK"
         }
     }while ($script:elemszam -ne $keszdb) # Ha a lista és kész gépek elemszáma megegyezik, a futás végetért
@@ -1868,7 +1988,7 @@ function Import-ADList
     Read-Host
 }
 
-function Import-IPRange
+function Get-IPrangeDevicesLocation
 {
     Show-Cimsor "MEGADOTT IP TARTOMÁNY ESZKÖZEI HELYÉNEK LEKÉRDEZÉSE"
     Set-Logname "EszkozHely"
@@ -1877,9 +1997,7 @@ function Import-IPRange
     $ipcim = Import-IPaddresses
     $config.csvnevelotag = "IP_TartományEszközei"
     Test-CSV "$($elsoIP.ToString())-$($utolsoIP.ToString())"
-
     Show-Cimsor "A(Z) $($elsoIP.ToString()) - $($utolsoIP.ToString()) IP TARTOMÁNY ESZKÖZEI HELYÉNEK LEKÉRDEZÉSE"
-
     Add-Log "[LEKÉRDEZÉS MEGKEZDVE] A(z) $($elsoIP.ToString())-$($utolsoIP.ToString())) IP tartomány eszközei helyének lekérdezése megkezdődött:"
     [Telnet]::Login()
 
@@ -1892,7 +2010,7 @@ function Import-IPRange
     {
         $sorszam = $i + 1
         $eszkoz[$i] = [Eszkoz]::New($ipcim[$i].IPaddress)
-        Write-Host "A FOLYAMAT ÁLLAPOTA: $sorszam/$script:ipdarab`nA(z) $($eszkoz[$i].IPaddress) eszköz lekérdezése folyamatban."
+        Write-Host "A(z) $($eszkoz[$i].IPaddress) eszköz lekérdezése folyamatban.($sorszam/$script:ipdarab)" -NoNewline
 
         if ($eszkoz[$i].IPaddress -eq $local.IPaddress)
         {
@@ -1908,95 +2026,30 @@ function Import-IPRange
                 $lekerdezes = [Lekerdezes]::New($keresesiparancs, $local, $remote)
                 if($lekerdezes.Siker())
                 {
-                    $lekerdezes.Feldolgoz()
                     $lekerdezes.ObjektumKitolto($eszkoz[$i])
                     $eszkoz[$i].SetNev()
-                    if(!(Test-Path $script:csvkimenet) -or !(Select-String -Path $script:csvkimenet -Pattern $eszkoz[$i].IPAddress))
+                    Sync-CSV $eszkoz[$i]
+                    Write-Host "`rA(z) $($eszkoz[$i].IPaddress) eszköz megtalálva a(z) $($eszkoz[$i].SwitchNev) switch $($eszkoz[$i].Port) portján"
+                    if ($sajateszkoz)
                     {
-                        $eszkoz[$i] | export-csv -encoding UTF8 -path $script:csvkimenet -NoTypeInformation -Append -Force -Delimiter ";"
+                        Out-LocalToUse $eszkoz[$sajateszkoz] $local
+                        $sajateszkoz = $false
                     }
-                    $keszdb++
-                }
-                if ($sajateszkoz -and !$eszkoz[$sajateszkoz].SwitchIP)
-                {
-                    $eszkoz[$sajateszkoz].SetSwitchNev($local.SwitchNev)
-                    $eszkoz[$sajateszkoz].SetSwitchIP($local.SwitchIP)
-                    $eszkoz[$sajateszkoz].SetPort($local.Port)
-                    $eszkoz[$sajateszkoz].SetIP($local.IPaddress)
-                    $eszkoz[$sajateszkoz].SetMAC($local.MACaddress)
-                    $eszkoz[$sajateszkoz].SetNev()
-                    if(!(Test-Path $script:csvkimenet) -or !(Select-String -Path $script:csvkimenet -Pattern $eszkoz[$sajateszkoz].IPAddress))
-                    {
-                        $eszkoz[$sajateszkoz] | export-csv -encoding UTF8 -path $script:csvkimenet -NoTypeInformation -Append -Force -Delimiter ";"
-                    }
-                    $keszdb++
                 }
             }
         }
         else
         {
-            $message = "$($eszkoz[$i].IPaddress) Eszköz nem érhető el"
+            $message = "A(z) $($eszkoz[$i].IPaddress) Eszköz nem érhető el"
             Add-Log "[ESZKÖZ OFFLINE] $message"
-            Write-Host $message! -ForegroundColor Red
+            Clear-Line
+            Write-Host "`r$message!" -ForegroundColor Red
         }
     }
 
     $message = "A(z) $($elsoIP.ToString()) - $($utolsoIP.ToString()) IP tartomány eszközei helyének lekérdezése sikeresen befejeződött:"
     Add-Log "[FOLYAMAT VÉGE] $message"
     Write-Host "$message`nA program egy billetnyű leütését követően visszatér a főmenübe."
-    Read-Host
-}
-
-function Get-IPaddressesState
-{
-    Show-Cimsor "IP TARTOMÁNY LEKÉRDEZÉSE"
-    Set-Logname "EszkozAllapot"
-    $eszkozok = Import-IPaddresses
-    $time = [Time]::New()
-    $config.csvnevelotag = "IP_Címlista"
-    $jelenelem = 1
-    Test-CSV "$($elsoIP.ToString())-$($utolsoIP.ToString())_$($time.FileName())"
-
-    Show-Cimsor "A(Z) $($elsoIP.ToString()) - $($utolsoIP.ToString()) IP TARTOMÁNY LEKÉRDEZÉSE"
-
-    foreach ($eszkoz in $eszkozok)
-    {
-        Write-Host "$($eszkoz.IPaddress) kapcsolatának ellenőrzése ($jelenelem/$($eszkozok.Length))" -NoNewline
-        switch ($method)
-        {
-            1 { $online = Test-Ping $eszkoz.IPaddress }
-            2 { $online = (Test-Connection $eszkoz.IPaddress -Quiet -Count 1) }
-            Default{ $online = Test-Ping $eszkoz.IPaddress }
-        }
-
-        $eszkoz.Online = $online
-        $name = ""
-        $neve = ""
-        if($online -and $config.nevgyujtes)
-        {
-            $name = Get-NameByIP $eszkoz.IPaddress
-            $neve = "; Neve: $name"
-            $eszkoz.Eszkoznev = $name
-        }
-
-        $eszkoz.Online = $eszkoz.EszkozAllapot()
-        $jelenelem++
-        Write-Host "`r$($eszkoz.IPaddress): Állapota: $($eszkoz.Online)$neve                  "
-        Add-Log "[ESZKÖZ ÁLLAPOT] $($eszkoz.IPaddress): Állapota: $($eszkoz.Online)$neve Idő:"
-        if(($config.logonline) -and ($config.logoffline))
-        {
-            $eszkoz | export-csv -encoding UTF8 -path $script:csvkimenet -NoTypeInformation -Append -Force -Delimiter ";"
-        }
-        elseif(($config.logonline) -and $online)
-        {
-            $eszkoz | export-csv -encoding UTF8 -path $script:csvkimenet -NoTypeInformation -Append -Force -Delimiter ";"
-        }
-        elseif(($config.logoffline) -and !$online)
-        {
-            $eszkoz | export-csv -encoding UTF8 -path $script:csvkimenet -NoTypeInformation -Append -Force -Delimiter ";"
-        }
-    }
-    Write-Host "A(z) $($elsoIP.ToString()) - $($utolsoIP.ToString()) IP tartomány lekérdezése befejeződött. Egy billentyű leütésével visszatérhetsz a főmenübe"
     Read-Host
 }
 
@@ -2026,22 +2079,56 @@ function Get-ADcomputersState
         $eszkoz.Online = $online
         $eszkoz.Online = $eszkoz.EszkozAllapot()
         $jelenelem++
-        Write-Host "`r$($eszkoz.Eszkoznev): Állapota: $($eszkoz.Online)                  "
-        Add-Log "[ESZKÖZ ÁLLAPOT] $($eszkoz.Eszkoznev): Állapota: $($eszkoz.Online) Idő:"
-        if(($config.logonline) -and ($config.logoffline))
-        {
-            $eszkoz | export-csv -encoding UTF8 -path $script:csvkimenet -NoTypeInformation -Append -Force -Delimiter ";"
-        }
-        elseif(($config.logonline) -and $online)
-        {
-            $eszkoz | export-csv -encoding UTF8 -path $script:csvkimenet -NoTypeInformation -Append -Force -Delimiter ";"
-        }
-        elseif(($config.logoffline) -and !$online)
-        {
-            $eszkoz | export-csv -encoding UTF8 -path $script:csvkimenet -NoTypeInformation -Append -Force -Delimiter ";"
-        }
+        $message = "$($eszkoz.Eszkoznev): Állapota: $($eszkoz.Online)"
+        Clear-Line
+        Write-Host "`r$message"
+        Add-Log "[ESZKÖZ ÁLLAPOT] $message Idő:"
+        Out-PingResult $eszkoz
     }
     Write-Host "A(z) $($script:ounev) OU gépeinek lekérdezése befejeződött. Egy billentyű leütésével visszatérhetsz a főmenübe"
+    Read-Host
+}
+
+function Get-IPaddressesState
+{
+    Show-Cimsor "IP TARTOMÁNY LEKÉRDEZÉSE"
+    Set-Logname "EszkozAllapot"
+    $eszkozok = Import-IPaddresses
+    $time = [Time]::New()
+    $config.csvnevelotag = "IP_Címlista"
+    $jelenelem = 1
+    Test-CSV "$($elsoIP.ToString())-$($utolsoIP.ToString())_$($time.FileName())"
+
+    Show-Cimsor "A(Z) $($elsoIP.ToString()) - $($utolsoIP.ToString()) IP TARTOMÁNY LEKÉRDEZÉSE"
+
+    foreach ($eszkoz in $eszkozok)
+    {
+        Write-Host "A(z) $($eszkoz.IPaddress) kapcsolatának ellenőrzése ($jelenelem/$($eszkozok.Length))" -NoNewline
+        switch ($method)
+        {
+            1 { $online = Test-Ping $eszkoz.IPaddress }
+            2 { $online = (Test-Connection $eszkoz.IPaddress -Quiet -Count 1) }
+            Default{ $online = Test-Ping $eszkoz.IPaddress }
+        }
+
+        $eszkoz.Online = $online
+        $name = ""
+        $neve = ""
+        if($online -and $config.nevgyujtes)
+        {
+            $name = Get-NameByIP $eszkoz.IPaddress
+            $neve = "; Neve: $name"
+            $eszkoz.Eszkoznev = $name
+        }
+
+        $eszkoz.Online = $eszkoz.EszkozAllapot()
+        $jelenelem++
+        Clear-Line
+        Write-Host "`r$($eszkoz.IPaddress): Állapota: $($eszkoz.Online)$neve"
+        Add-Log "[ESZKÖZ ÁLLAPOT] $($eszkoz.IPaddress): Állapota: $($eszkoz.Online)$neve Idő:"
+        Out-PingResult $eszkoz
+    }
+    Write-Host "A(z) $($elsoIP.ToString()) - $($utolsoIP.ToString()) IP tartomány lekérdezése befejeződött. Egy billentyű leütésével visszatérhetsz a főmenübe"
     Read-Host
 }
 
@@ -2068,8 +2155,8 @@ for(;;)
     switch ($valassz) {
         1 { Set-Kiiratas }
         2 { Set-ParancsKiiratas }
-        3 { Import-ADList }
-        4 { Import-IPRange }
+        3 { Get-ADcomputersLocation }
+        4 { Get-IPrangeDevicesLocation }
         5 { Get-ADcomputersState }
         6 { Get-IPaddressesState }
         S { $config.ModifyConfig() }
