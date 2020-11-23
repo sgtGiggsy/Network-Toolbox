@@ -3,3 +3,5 @@ Logfiles
 *.dll
 *.ico
 *.exe
+*.db
+test.ps1

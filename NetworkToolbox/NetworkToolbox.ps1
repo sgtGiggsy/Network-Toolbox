@@ -288,6 +288,77 @@ Class Setting
     }
 }
 
+Class SQL
+{
+    $con
+
+    SQL()
+    {
+        ## Kapcsolat létrehozása
+        Import-Module .\System.Data.SQLite.dll
+        $this.con = New-Object -TypeName System.Data.SQLite.SQLiteConnection
+        $this.con.ConnectionString = "Data Source=.\NetworkToolbox.db"
+        $this.Open()
+        $this.CreateTable([Local]::CreateTable())
+        $this.CreateTable([Remote]::CreateTable())
+        $this.CreateTable([Eszkoz]::CreateTable())
+        $this.CreateTable([MasVLAN]::CreateTable())
+        $this.Close()
+    }
+
+    Open()
+    {
+        ## Kapcsolat megnyitása
+        $this.con.Open()
+    }
+
+    CreateTable($commandtext)
+    {
+        ## Adattábla létrehozása
+        $sql = $this.RunCommand($commandtext)
+        $adapter = New-Object -TypeName System.Data.SQLite.SQLiteDataAdapter $sql
+        $data = New-Object System.Data.DataSet
+        [void]$adapter.Fill($data)
+        $this.Close()
+    }
+
+    AddRow($commandtext, $attribname, $value)
+    {
+        ## Új sor hozzáadása
+        $sql = $this.RunCommand($commandtext)
+        for ($i = 0; $i -lt $attribname.Length, $i++)
+        {
+            $sql.Parameters.AddWithValue($attribname[$i], $value[$i]) > $null
+        }
+
+        $sql.ExecuteNonQuery() > $null
+        $this.Close()
+    }
+
+    [Object]RunCommand($commandtext)
+    {
+        $this.Open()
+        $sql = $this.con.CreateCommand()
+        $sql.CommandText = $commandtext
+        return $sql
+    }
+
+    [Object]QueryTable($commandtext)
+    {
+        $sql = $this.con.RunCommand($commandtext)
+        $adapter = New-Object -TypeName System.Data.SQLite.SQLiteDataAdapter $sql
+        $data = New-Object System.Data.DataSet
+        [void]$adapter.Fill($data)
+        $this.Close()
+        return $data
+    }
+
+    Close()
+    {
+        $this.con.Close()
+    }
+}
+
 Class Time
 {
     $filetime
@@ -331,7 +402,7 @@ Class Eszkoz
 
     Eszkoz($bemenet)
     {
-        if($bemenet -match $global:config.IPpattern)
+        if($bemenet -match $script:config.IPpattern)
         {
             $this.IPaddress = $bemenet
         }
@@ -393,6 +464,29 @@ Class Eszkoz
         {
             $this.Felhasznalo = Get-UtolsoUser $this.Eszkoznev
         }
+    }
+
+    Static [string]CreateTable()
+    {
+        $commandtext = "CREATE TABLE IF NOT EXISTS Eszkozok (
+                        Eszkoznev varchar(255),
+                        IPaddress varchar(255),
+                        MACaddress varchar(255),
+                        SwitchNev varchar(255),
+                        SwitchIP varchar(255),
+                        Port varchar(255),
+                        Felhasznalo varchar(255)
+                        );"
+        return $commandtext
+    }
+
+    InsertIntoSQL()
+    {
+        $commandtext = "INSERT INTO Eszkozok (Eszkoznev, IPaddress, MACaddress, SwitchNev, SwitchIP, Port, Felhasznalo) Values (@Eszkoznev, @IPaddress, @MACaddress, @SwitchNev, @SwitchIP, @Port, @Felhasznalo)"
+        $attribnames = "@Eszkoznev", "@IPaddress", "@MACaddress", "@SwitchNev", "@SwitchIP", "@Port", "@Felhasznalo"
+        $values = $this.Eszkoznev, $this.IPaddress, $this.MACaddress, $this.SwitchNev, $this.SwitchIP, $this.Port, $this.Felhasznalo
+
+        $script:sql.AddRow($commandtext, $attribnames, $values)
     }
 }
 
@@ -477,6 +571,30 @@ Class Local
         {
             return $true
         }
+    }
+
+    Static [String]CreateTable()
+    {
+        $commandtext = "CREATE TABLE IF NOT EXISTS Local (
+                        Gepnev varchar(255),
+                        IPaddress varchar(255),
+                        MACaddress varchar(255),
+                        Mask varchar(255),
+                        SwitchNev varchar(255),
+                        SwitchIP varchar(255),
+                        Port varchar(255),
+                        Megbizhato int
+                        );"
+        return $commandtext
+    }
+
+    InsertIntoSQL()
+    {
+        $commandtext = "INSERT INTO Local (Gepnev, IPaddress, MACaddress, Mask, SwitchNev, SwitchIP, Port, Megbizhato) Values (@Gepnev, @IPaddress, @MACaddress, @Mask, @SwitchNev, @SwitchIP, @Port, @Megbizhato)"
+        $attribnames = "@Gepnev", "@IPaddress", "@MACaddress", "@Mask", "@SwitchNev", "@SwitchIP", "@Port", "@Megbizhato"
+        $values = $this.Gepnev, $this.IPaddress, $this.MACaddress, $this.Mask, $this.SwitchNev, $this.SwitchIP, $this.Port, $this.Megbizhato
+
+        $script:sql.AddRow($commandtext, $attribnames, $values)
     }
 }
 
@@ -607,7 +725,7 @@ Class Remote
 
     [Bool]IfIP($keresetteszkoz)
     {
-        if($keresetteszkoz -match $global:config.IPpattern)
+        if($keresetteszkoz -match $script:config.IPpattern)
         {
             return $true
         }
@@ -622,7 +740,7 @@ Class Remote
         $addresses = [System.Net.Dns]::GetHostAddresses($hostname)
         foreach ($address in $addresses)
         {
-            if ($address -match $global:config.IPpattern)
+            if ($address -match $script:config.IPpattern)
             {
                 $this.IPaddress = $address
                 Break
@@ -646,6 +764,26 @@ Class Remote
             return "Offline"
         }
     }
+
+    Static [String]CreateTable()
+    {
+        $commandtext = "CREATE TABLE IF NOT EXISTS Local (
+                        Eszkoznev varchar(255),
+                        IPaddress varchar(255),
+                        MACaddress varchar(255),
+                        Online int
+                        );"
+        return $commandtext
+    }
+
+    InsertIntoSQL()
+    {
+        $commandtext = "INSERT INTO Remote (Eszkoznev, IPaddress, MACaddress, Online) Values (@Eszkoznev, @IPaddress, @MACaddress, @Online)"
+        $attribnames = "@Eszkoznev", "@IPaddress", "@MACaddress", "Online"
+        $values = $this.Eszkoznev, $this.IPaddress, $this.MACaddress, $this.Online
+
+        $script:sql.AddRow($commandtext, $attribnames, $values)
+    }
 }
 
 Class IPcim
@@ -660,7 +798,7 @@ Class IPcim
         $kimenet = $false
         do
         {
-            if($bemenet -match $global:config.IPpattern)
+            if($bemenet -match $script:config.IPpattern)
             {
                 $kimenet = $bemenet.Split(".")
                 [int32]$this.tag1 = $kimenet[0]
@@ -694,6 +832,25 @@ Class MasVLAN
         $vlan = ($tracegep.IPAddress).Split(".")
         $this.subnet = "$($vlan[0]).$($vlan[1]).$($vlan[2])"
     }
+
+    Static [String]CreateTable()
+    {
+        $commandtext = "CREATE TABLE IF NOT EXISTS MasVLAN (
+                        subnet varchar(255),
+                        mask varchar(255),
+                        tracegep varchar(255)
+                        );"
+        return $commandtext
+    }
+
+    InsertIntoSQL()
+    {
+        $commandtext = "INSERT INTO MasVLAN (subnet, mask, tracegep) Values (@subnet, @mask, @tracegep)"
+        $attribnames = "@subnet", "@mask", "@tracegep"
+        $values = $this.subnet, $this.mask, $this.tracegep
+
+        $script:sql.AddRow($commandtext, $attribnames, $values)
+    }
 }
 
 #####
@@ -715,7 +872,7 @@ Class Telnet
             do
             {
                 #[Telnet]::SetSwitch()
-                Show-Cimsor "Bejelentkezés a $($global:config.switch) switchre"
+                Show-Cimsor "Bejelentkezés a $($script:config.switch) switchre"
                 [Telnet]::LoginCreds()
                 $login = [Telnet]::TestConnection()
 
@@ -734,7 +891,7 @@ Class Telnet
 
     Static SetConnection($switch, $felhasznalonev, $jelszo)
     {
-        $global:config.switch = $switch
+        $script:config.switch = $switch
         [Telnet]::felhasznalonev = $felhasznalonev
         [Telnet]::jelszo = $jelszo
     }
@@ -749,7 +906,7 @@ Class Telnet
     Static SetSwitch()
     {
         Show-Cimsor "SWITCH BEJELENTKEZÉS"
-        Write-Host "Az alapértelmezett switchet használod ($($global:config.switch)), vagy megadod kézzel a címet?`nAdd meg a switch IP címét, ha választani szeretnél, vagy üss Entert, ha az alapértelmezettet használnád!"
+        Write-Host "Az alapértelmezett switchet használod ($($script:config.switch)), vagy megadod kézzel a címet?`nAdd meg a switch IP címét, ha választani szeretnél, vagy üss Entert, ha az alapértelmezettet használnád!"
         do
         {
             $kilep = $true
@@ -765,7 +922,7 @@ Class Telnet
                 }
                 if($kilep)
                 {
-                    $global:config.switch = $valassz
+                    $script:config.switch = $valassz
                 }
             }
         }while(!$kilep)
@@ -779,14 +936,14 @@ Class Telnet
         $login = $logintest | Select-String -Pattern "#", ">"
         if (!$login -or !$logintest)
         {
-            $message = "A megadott felhasználónév: $([Telnet]::felhasznalonev), vagy a hozzá tartozó jelszó nem megfelelő, esetleg a(z) $($global:config.switch) címen nincs elérhető switch"
+            $message = "A megadott felhasználónév: $([Telnet]::felhasznalonev), vagy a hozzá tartozó jelszó nem megfelelő, esetleg a(z) $($script:config.switch) címen nincs elérhető switch"
             Add-Log "[SWITCH KAPCSOLÓDÁSI HIBA] $message"
             Write-Host "$message!" -ForegroundColor Red
             $login = $false
         }
         else
         {
-            Add-Log "[SWITCH SIKERES KAPCSOLÓDÁS] A(z) $([Telnet]::felhasznalonev) sikeresen kapcsolódott a(z) $($global:config.switch) switchez"
+            Add-Log "[SWITCH SIKERES KAPCSOLÓDÁS] A(z) $([Telnet]::felhasznalonev) sikeresen kapcsolódott a(z) $($script:config.switch) switchez"
             $login = $true
         }
         return $login
@@ -805,7 +962,7 @@ Class Telnet
     
         try
         {
-            $socket = New-Object System.Net.Sockets.TcpClient($global:config.switch, $global:config.port)
+            $socket = New-Object System.Net.Sockets.TcpClient($script:config.switch, $script:config.port)
         }
         catch
         {
@@ -823,10 +980,10 @@ Class Telnet
             {
                 $writer.WriteLine($command)
                 $writer.Flush()
-                Start-Sleep -Milliseconds $global:config.waittime
+                Start-Sleep -Milliseconds $script:config.waittime
             }
     
-            Start-Sleep -Milliseconds $global:config.waittime
+            Start-Sleep -Milliseconds $script:config.waittime
     
             while($stream.DataAvailable)
             {
@@ -902,14 +1059,14 @@ Class Lekerdezes
         $pinglocal = "ping $($local.IPaddress)"
         $pingremote = "ping $($remote.IPaddress)"
         [String[]]$parancs = @($pinglocal, $pingremote, $keresesiparancs)
-        $waittimeorig = $global:config.waittime
+        $waittimeorig = $script:config.waittime
         do
         {
             Write-Host "A(z) $($remote.IPaddress) IP című eszköz helyének lekérdezése folyamatban..."
             $this.result = [Telnet]::InvokeCommands($parancs)
             if(!$this.result)
             {
-                $message = "A(z) $($remote.IPaddress) című eszköz lekérdezése során a programnak nem sikerült csatlakozni a(z) $($global:config.switch) IP című switchhez!"
+                $message = "A(z) $($remote.IPaddress) című eszköz lekérdezése során a programnak nem sikerült csatlakozni a(z) $($script:config.switch) IP című switchhez!"
                 Add-Log "[KAPCSOLÓDÁSI HIBA] $message"
                 Write-Host $message -ForegroundColor Red
             }
@@ -922,25 +1079,25 @@ Class Lekerdezes
             {
                 Show-Debug "Az útvonal lekérése sikertelen nem próbálkozom újra"
                 $this.sikeres = $false
-                $failcount = $global:config.maxhiba
+                $failcount = $script:config.maxhiba
             }
-            elseif (!$this.Siker() -and $failcount -lt $global:config.maxhiba)
+            elseif (!$this.Siker() -and $failcount -lt $script:config.maxhiba)
             {
-                Show-Debug "Az útvonal lekérése sikertelen, újrapróbálkozom hosszabb idővel, ami jelenleg: $($global:config.waittime) ezredmásodperc"
+                Show-Debug "Az útvonal lekérése sikertelen, újrapróbálkozom hosszabb idővel, ami jelenleg: $($script:config.waittime) ezredmásodperc"
                 $failcount++
-                $visszamaradt = $global:config.maxhiba - $failcount
+                $visszamaradt = $script:config.maxhiba - $failcount
                 Write-Host "A(z) $($remote.IPaddress) eszköz helyének lekérdezése most nem járt sikerrel. Még $visszamaradt alkalommal újrapróbálkozom!" -ForegroundColor Yellow
-                if ($failcount -eq $global:config.maxhiba)
+                if ($failcount -eq $script:config.maxhiba)
                 {
-                    $message = "A(z) $($remote.IPaddress) eszköz helyének lekérdezése a(z) $($global:config.switch) IP című switchről időtúllépés miatt nem sikerült"
+                    $message = "A(z) $($remote.IPaddress) eszköz helyének lekérdezése a(z) $($script:config.switch) IP című switchről időtúllépés miatt nem sikerült"
                     Write-Host $message -ForegroundColor Red
                     Add-Log "[IDŐTÚLLÉPÉS] $message"
                     #Write-Host $this.result
                 }
-                $global:config.waittime = $global:config.waittime + 1000
+                $script:config.waittime = $script:config.waittime + 1000
             }
-        }while (!$this.Siker() -and $failcount -lt $global:config.maxhiba)
-        $global:config.waittime = $waittimeorig
+        }while (!$this.Siker() -and $failcount -lt $script:config.maxhiba)
+        $script:config.waittime = $waittimeorig
         if($this.Siker())
         {
             $this.Feldolgoz()
@@ -1089,6 +1246,18 @@ Class Import
             {
                 $script:eszkoz[$i] = [Eszkoz]::New($csvdata[$i].Eszkoznev)
             }
+        }
+    }
+
+    Static SQL($table)
+    {
+        $sqldata = $script:sql.QueryTable("SELECT * FROM $table")
+
+        $script:elemszam = $sqldata.Length
+        $script:eszkoz = New-Object 'object[]' $script:elemszam
+        for ($i = 0; $i -lt $script:elemszam; $i++)
+        {
+            $sqldata.Tables.Rows[$i] = $script:eszkoz[$i]
         }
     }
 }
@@ -1434,6 +1603,7 @@ function ConvertTo-DistinguishedName
 
 function Get-EgyszeriLekerdezes
 {
+    param($csakkiir)
     $local = [Local]::New()
     do
     {
@@ -1447,9 +1617,17 @@ function Get-EgyszeriLekerdezes
             Write-Host "Add meg újra az IP címet, vagy nevet!" -ForegroundColor Red
         }
     }while(!$keresesiparancs -or !$remote.Elerheto())
+    if(!$csakkiir)
+    {
+        $lekerdezes = [Lekerdezes]::New($keresesiparancs, $local, $remote)
+        return $lekerdezes
+    }
+    else
+    {
+        $returnarray = $keresesiparancs, $local, $remote
+        return $returnarray
+    }
     
-    $lekerdezes = [Lekerdezes]::New($keresesiparancs, $local, $remote)
-    return $lekerdezes
 }
 
 #####
@@ -1808,7 +1986,6 @@ function Out-PingResult
 ##
 #####
 
-##### JAVÍTANI !!!! ########
 function Set-Kiiratas
 {
     Show-Cimsor "EGYETLEN ESZKÖZ MEGKERESÉSE"
@@ -1817,23 +1994,21 @@ function Set-Kiiratas
     $lekerdezes = Get-EgyszeriLekerdezes
     if($lekerdezes.Siker())
     {
-        $lekerdezes.Feldolgoz()
         $lekerdezes.Kiirat()
     }
     Write-Host "`nA továbblépéshez üss Entert!"
     Read-Host
 }
 
-############# JAVÍTANI!!!!!!!!!!!!! ####################
 function Set-ParancsKiiratas
 {
     Show-Cimsor "EGYETLEN ESZKÖZ MEGKERESÉSE"
     Set-Logname "EszkozHely"
-    $lekerdezes = Get-EgyszeriLekerdezes
-    Write-Host "Helyi IP cím:           $($script:local.IPaddress) (ezt kell pingelni a switchről, ha a TraceRoute parancs 'Error: Source Mac address not found.' hibát ad."
-    Write-Host "Keresett eszköz IP-je:  $($script:remote.IPaddress) (ezt kell pingelni a switchről, ha a TraceRoute parancs 'Error: Destination Mac address not found.' hibát ad."
-    Write-Host "Keresési parancs:       $global:keresesiparancs (automatikusan a vágólapra másolva)`n"
-    Set-Clipboard $global:keresesiparancs
+    $lekerdezes = Get-EgyszeriLekerdezes $true
+    Write-Host "Helyi IP cím:           $($lekerdezes[1].IPaddress) (ezt kell pingelni a switchről, ha a TraceRoute parancs 'Error: Source Mac address not found.' hibát ad."
+    Write-Host "Keresett eszköz IP-je:  $($lekerdezes[2].IPaddress) (ezt kell pingelni a switchről, ha a TraceRoute parancs 'Error: Destination Mac address not found.' hibát ad."
+    Write-Host "Keresési parancs:       $($lekerdezes[0]) (automatikusan a vágólapra másolva)`n"
+    Set-Clipboard $lekerdezes[0]
     Write-Host "A továbblépéshez üss Entert!"
     Read-Host
 }
@@ -2136,7 +2311,8 @@ function Get-IPaddressesState
 #-#-#                                   BELÉPÉSI PONT                                         #-#-#
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 
-$global:config = [Setting]::New()
+$script:config = [Setting]::New()
+$script:sql = [SQL]::New()
 
 for(;;)
 {
