@@ -269,7 +269,8 @@ Class Setting
 
     SaveConfig()
     {
-        $path = $this.logfile -Replace "\\", "\\"
+        $pathcsv = $this.csvkonyvtar -Replace "\\", "\\"
+        $pathlog = $this.logfile -Replace "\\", "\\"
         "log = $($this.log)" | Out-File .\config.ini
         "logtime = $($this.logtime)" | Out-File .\config.ini -Append
         "debug = $($this.debug)" | Out-File .\config.ini -Append
@@ -283,8 +284,8 @@ Class Setting
         "retrytime = $($this.retrytime)" | Out-File .\config.ini -Append
         "aktivnapok = $($this.aktivnapok)" | Out-File .\config.ini -Append
         "csvnevelotag = $($this.csvnevelotag)" | Out-File .\config.ini -Append
-        "csvkonyvtar = $($this.csvkonyvtar)" | Out-File .\config.ini -Append
-        "logfile = $($path)" | Out-File .\config.ini -Append
+        "csvkonyvtar = $($pathcsv)" | Out-File .\config.ini -Append
+        "logfile = $($pathlog)" | Out-File .\config.ini -Append
     }
 }
 
@@ -298,10 +299,8 @@ Class SQL
         Import-Module .\System.Data.SQLite.dll
         $this.con = New-Object -TypeName System.Data.SQLite.SQLiteConnection
         $this.con.ConnectionString = "Data Source=.\NetworkToolbox.db"
-        $this.Open()
         $this.CreateTable([Local]::CreateTable())
         $this.CreateTable([Remote]::CreateTable())
-        $this.CreateTable([Eszkoz]::CreateTable())
         $this.CreateTable([MasVLAN]::CreateTable())
         $this.Close()
     }
@@ -326,12 +325,24 @@ Class SQL
     {
         ## Új sor hozzáadása
         $sql = $this.RunCommand($commandtext)
-        for ($i = 0; $i -lt $attribname.Length, $i++)
+        for ($i = 0; $i -lt $attribname.Length; $i++)
         {
-            $sql.Parameters.AddWithValue($attribname[$i], $value[$i]) > $null
+            Show-Debug $attribname[$i]
+            if(!$value[$i])
+            {
+                $ertek = "null"
+            }
+            else
+            {
+                $ertek = $value[$i]
+            }
+            Show-Debug $ertek
+            $sql.Parameters.AddWithValue($attribname[$i], $ertek) > $null
         }
-
-        $sql.ExecuteNonQuery() > $null
+foreach ($param in $sql.Parameters)
+    {Show-Debug $param.ToString }
+Read-Host
+        $sql.ExecuteNonQuery()
         $this.Close()
     }
 
@@ -445,10 +456,12 @@ Class Eszkoz
     {
         try
         {
-            $this.SwitchIP = $switchIP.Trim("(", ")", "[", "].", ".")
+            $this.SwitchIP = $switchIP.Trim("(", ")", "[", "]", ".")
         }
         catch
         {
+            Show-Debug $switchIP
+            Show-Debug $error[0]
             $this.SwitchIP = "IP cím nem elérhető"
         }
     }
@@ -466,9 +479,9 @@ Class Eszkoz
         }
     }
 
-    Static [string]CreateTable()
+    Static [string]CreateTable($ounev)
     {
-        $commandtext = "CREATE TABLE IF NOT EXISTS Eszkozok (
+        $commandtext = "CREATE TABLE IF NOT EXISTS Eszkozok-$ounev (
                         Eszkoznev varchar(255),
                         IPaddress varchar(255),
                         MACaddress varchar(255),
@@ -480,11 +493,11 @@ Class Eszkoz
         return $commandtext
     }
 
-    InsertIntoSQL()
+    InsertIntoSQL($ounev)
     {
-        $commandtext = "INSERT INTO Eszkozok (Eszkoznev, IPaddress, MACaddress, SwitchNev, SwitchIP, Port, Felhasznalo) Values (@Eszkoznev, @IPaddress, @MACaddress, @SwitchNev, @SwitchIP, @Port, @Felhasznalo)"
-        $attribnames = "@Eszkoznev", "@IPaddress", "@MACaddress", "@SwitchNev", "@SwitchIP", "@Port", "@Felhasznalo"
-        $values = $this.Eszkoznev, $this.IPaddress, $this.MACaddress, $this.SwitchNev, $this.SwitchIP, $this.Port, $this.Felhasznalo
+        $commandtext = "INSERT INTO Eszkozok-$ounev (Eszkoznev, IPaddress, MACaddress, SwitchNev, SwitchIP, Port, Felhasznalo) Values (@Eszkoznev, @IPaddress, @MACaddress, @SwitchNev, @SwitchIP, @Port, @Felhasznalo)"
+        $attribnames = @("@Eszkoznev", "@IPaddress", "@MACaddress", "@SwitchNev", "@SwitchIP", "@Port", "@Felhasznalo")
+        $values = @($this.Eszkoznev, $this.IPaddress, $this.MACaddress, $this.SwitchNev, $this.SwitchIP, $this.Port, $this.Felhasznalo)
 
         $script:sql.AddRow($commandtext, $attribnames, $values)
     }
@@ -591,8 +604,8 @@ Class Local
     InsertIntoSQL()
     {
         $commandtext = "INSERT INTO Local (Gepnev, IPaddress, MACaddress, Mask, SwitchNev, SwitchIP, Port, Megbizhato) Values (@Gepnev, @IPaddress, @MACaddress, @Mask, @SwitchNev, @SwitchIP, @Port, @Megbizhato)"
-        $attribnames = "@Gepnev", "@IPaddress", "@MACaddress", "@Mask", "@SwitchNev", "@SwitchIP", "@Port", "@Megbizhato"
-        $values = $this.Gepnev, $this.IPaddress, $this.MACaddress, $this.Mask, $this.SwitchNev, $this.SwitchIP, $this.Port, $this.Megbizhato
+        $attribnames = @("@Gepnev", "@IPaddress", "@MACaddress", "@Mask", "@SwitchNev", "@SwitchIP", "@Port", "@Megbizhato")
+        $values = @($this.Gepnev, $this.IPaddress, $this.MACaddress, $this.Mask, $this.SwitchNev, $this.SwitchIP, $this.Port, $this.Megbizhato)
 
         $script:sql.AddRow($commandtext, $attribnames, $values)
     }
@@ -615,10 +628,6 @@ Class Remote
         $this.AdatKitolt($keresetteszkoz)
     }
 
-    Remote($keresetteszkoz, [bool]$dontcheck)
-    {
-        $this.GetEszkoz($keresetteszkoz)
-    }
 
     AdatBeker()
     {
@@ -716,8 +725,9 @@ Class Remote
         $this.Online = Test-Ping $keresetteszkoz
         if(!$this.Online)
         {
-            $message = "A(z) $keresetteszkoz eszköz jelenleg nem elérhető"
+            $message = "`rA(z) $keresetteszkoz eszköz jelenleg nem elérhető"
             Add-Log "[ESZKOZ OFFLINE] $message"
+            Clear-Line
             Write-Host "$message!" -ForegroundColor Red
         }
         return $this.Online
@@ -779,11 +789,105 @@ Class Remote
     InsertIntoSQL()
     {
         $commandtext = "INSERT INTO Remote (Eszkoznev, IPaddress, MACaddress, Online) Values (@Eszkoznev, @IPaddress, @MACaddress, @Online)"
-        $attribnames = "@Eszkoznev", "@IPaddress", "@MACaddress", "Online"
-        $values = $this.Eszkoznev, $this.IPaddress, $this.MACaddress, $this.Online
+        $attribnames = @("@Eszkoznev", "@IPaddress", "@MACaddress", "Online")
+        $values = @($this.Eszkoznev, $this.IPaddress, $this.MACaddress, $this.Online)
 
         $script:sql.AddRow($commandtext, $attribnames, $values)
     }
+}
+
+Class PingDevice
+{
+    $IPcím
+    $EszközNév = $null
+    $Állapot
+
+    PingDevice($eszkoz)
+    {
+        if($eszkoz -match $script:config.IPpattern)
+        {
+            $this.IPcím = $eszkoz
+        }
+        else
+        {
+            $this.EszközNév = $eszkoz
+        }
+    }
+
+    [Bool]Online($eszkoz)
+    {
+        $online = $false
+        switch ($script:config.method)
+        {
+            1 { $online = Test-Ping $eszkoz }
+            2 { $online = (Test-Connection $eszkoz -Quiet -Count 1) }
+            Default{ $online = Test-Ping $eszkoz }
+        }
+        if($online)
+        {
+            $this.Állapot = "Online"
+        }
+        else
+        {
+            $this.Állapot = "Offline"
+        }
+
+        return $online
+    }
+
+    NameByIP()
+    {
+        if ($script:config.nevgyujtes)
+        {
+            try
+            {
+                $namesplit = ([System.Net.DNS]::GetHostEntry($this.IPcím)).HostName
+                $kimenet = $namesplit.Split(".")
+                $this.EszközNév = $kimenet[0]
+            }
+            catch [System.Net.Sockets.SocketException]
+            {
+                $this.EszközNév = "Nem elérhető"
+            }
+        }
+    }
+
+    IpByName()
+    {
+        $addresses = [System.Net.Dns]::GetHostAddresses($this.EszközNév)
+        foreach ($address in $addresses)
+        {
+            if ($address -match $script:config.IPpattern)
+            {
+                $this.IPcím = $address
+                Break
+            }
+        }
+    }
+
+    [String]Nevkiir()
+    {
+        $neve = "; Neve: $($this.EszközNév())"
+
+        return $neve
+    }
+
+    OutCSV()
+    {
+        if(($script:config.logonline) -and ($script:config.logoffline))
+        {
+            $this | export-csv -encoding UTF8 -path $script:csvkimenet -NoTypeInformation -Append -Force -Delimiter ";"
+        }
+        elseif(($script:config.logonline) -and $this.Állapot)
+        {
+            $this | export-csv -encoding UTF8 -path $script:csvkimenet -NoTypeInformation -Append -Force -Delimiter ";"
+        }
+        elseif(($script:config.logoffline) -and !$this.Állapot)
+        {
+            $this | export-csv -encoding UTF8 -path $script:csvkimenet -NoTypeInformation -Append -Force -Delimiter ";"
+        }
+    }
+
 }
 
 Class IPcim
@@ -800,11 +904,8 @@ Class IPcim
         {
             if($bemenet -match $script:config.IPpattern)
             {
-                $kimenet = $bemenet.Split(".")
-                [int32]$this.tag1 = $kimenet[0]
-                [int32]$this.tag2 = $kimenet[1]
-                [int32]$this.tag3 = $kimenet[2]
-                [int32]$this.tag4 = $kimenet[3]
+                $this.Set($bemenet)
+                $kimenet = $true
             }
             else
             {
@@ -813,9 +914,128 @@ Class IPcim
             }
         }while (!($kimenet))
     }
+
+    Set($bemenet)
+    {
+        $kimenet = $bemenet.Split(".")
+        [int32]$this.tag1 = $kimenet[0]
+        [int32]$this.tag2 = $kimenet[1]
+        [int32]$this.tag3 = $kimenet[2]
+        [int32]$this.tag4 = $kimenet[3]
+    }
+
     [string]ToString()
     {
         return "$($this.tag1).$($this.tag2).$($this.tag3).$($this.tag4)"
+    }
+
+    Add($number)
+    {
+        $maradek1 = $number - (256 - $this.tag4)
+        if($maradek1 -lt 0)
+        {
+            $this.tag4 = $this.tag4 + $number
+        }
+        else
+        {
+            $this.tag4 = 0 + ($maradek1 % 256)
+            $maradek2 = [Math]::truncate($maradek1 / 256)
+            if(($maradek2 - (255 - $this.tag3)) -lt 0)
+            {
+                $this.tag3 = $this.tag3 + $maradek2 + 1
+            }
+            else
+            {
+                $this.tag3 = 0 + ($maradek2 % 256)
+                $maradek3 = [Math]::truncate($maradek2 / 256)
+                if(($maradek3 - (255 - $this.tag2)) -lt 0)
+                {
+                    $this.tag2 = $this.tag2 + $maradek3 + 1
+                }
+                else
+                {
+                    $maradek4 = [Math]::truncate($maradek3 / 256)
+                    $this.tag1 = $this.tag1 + $maradek4 + 1
+                    $this.tag2 = 0 + ($maradek3 % 256)
+                }
+            }
+        }
+    }
+
+    [Bool]BiggerThan($IP2)
+    {     
+        $elsonagyobb = $false
+        if ($this.Tag1 -gt $IP2.Tag1)
+        {
+            $elsonagyobb = $true
+        }
+        elseif($this.Tag1 -eq $IP2.Tag1)
+        {
+            if($this.Tag2 -gt $IP2.Tag2)
+            {
+                $elsonagyobb = $true
+            }
+            elseif($this.Tag2 -eq $IP2.Tag2)
+            {
+                if($this.Tag3 -gt $IP2.Tag3)
+                {
+                    $elsonagyobb = $true
+                }
+                elseif($this.Tag3 -eq $IP2.Tag3)
+                {
+                    if($this.Tag4 -gt $IP2.Tag4)
+                    {
+                        $elsonagyobb = $true
+                    }
+                }
+            }
+        }
+    
+        return $elsonagyobb 
+    }
+
+    [Int]Count($utolsoIP)
+    {       
+        $elsotag = $utolsoIP.tag1 - $this.tag1 + 1
+        $masodiktag = (256 - $this.tag2) + ($utolsoIP.tag2+1) + ((($elsotag - 2) * 256))
+        $harmadiktag = (256 - $this.tag3) + ($utolsoIP.tag3+1) + ((($masodiktag - 2) * 256))
+        $negyediktag = (256 - $this.tag4) + ($utolsoIP.tag4+1) + ((($harmadiktag - 2) * 256))
+
+        return $negyediktag
+    }
+
+    [Object]Range($zaroIP)
+    {
+        $eszkoz = New-Object System.Collections.ArrayList($null)
+        $zaroIP = $zaroIP.ToString()
+        $eszkoz.Add($this.ToString()) > $null
+        do
+        {
+            $this.Add(1)
+            $eszkoz.Add($this.ToString()) > $null
+        } while ($this.ToString() -ne $zaroIP)
+
+        return $eszkoz
+    }
+
+    [Object]RangeKihagyassal($zaroIP, $elsokihagyott, $utolsokihagyott)
+    {
+        $eszkoz = New-Object System.Collections.ArrayList($null)
+        $eszkoz.Add($this.ToString()) > $null
+        $kihagyas = $elsokihagyott.Count($utolsokihagyott)
+        $zaroIP = $zaroIP.ToString()
+        $elsokihagyott = $elsokihagyott.ToString()
+        do
+        {
+            $this.Add(1)
+            if ($this.ToString() -eq $elsokihagyott)
+            {
+                $this.Add($kihagyas)
+            }
+            $eszkoz.Add($this.ToString()) > $null
+        } while ($this.ToString() -ne $zaroIP)
+
+        return $eszkoz
     }
 }
 
@@ -846,8 +1066,8 @@ Class MasVLAN
     InsertIntoSQL()
     {
         $commandtext = "INSERT INTO MasVLAN (subnet, mask, tracegep) Values (@subnet, @mask, @tracegep)"
-        $attribnames = "@subnet", "@mask", "@tracegep"
-        $values = $this.subnet, $this.mask, $this.tracegep
+        $attribnames = @("@subnet", "@mask", "@tracegep")
+        $values = @($this.subnet, $this.mask, $this.tracegep)
 
         $script:sql.AddRow($commandtext, $attribnames, $values)
     }
@@ -864,6 +1084,7 @@ Class Telnet
 {
     Static $felhasznalonev = $false
     Static $jelszo = $false
+    Static $nonroot
     Static Login()
     {
         if (![Telnet]::felhasznalonev -or ![Telnet]::jelszo)
@@ -913,7 +1134,7 @@ Class Telnet
             $valassz = Read-Host "A switch IP címe"
             if ($valassz)
             {
-                if (!(Test-Ping $valassz))
+                if (!(Test-Connection $valassz -Quiet -Count 1))
                 {
                     $message = "A(z) $valassz IP címen nem található eszköz"
                     Add-Log "[SWITCH ELÉRHETETLEN] $message"
@@ -946,6 +1167,10 @@ Class Telnet
             Add-Log "[SWITCH SIKERES KAPCSOLÓDÁS] A(z) $([Telnet]::felhasznalonev) sikeresen kapcsolódott a(z) $($script:config.switch) switchez"
             $login = $true
         }
+        if($logintest | Select-String -Pattern ">")
+        {
+            [Telnet]::nonroot = $true
+        }
         return $login
     }
 
@@ -953,7 +1178,14 @@ Class Telnet
     {
         $socket = $false
         $result = ""
-        [String[]]$commands = @([Telnet]::felhasznalonev, [Telnet]::jelszo)
+        if([Telnet]::nonroot)
+        {
+            [String[]]$commands = @([Telnet]::felhasznalonev, [Telnet]::jelszo, "enable", [Telnet]::jelszo)
+        }
+        else
+        {
+            [String[]]$commands = @([Telnet]::felhasznalonev, [Telnet]::jelszo)
+        }
     
         foreach ($parancs in $parancsok)
         {
@@ -975,7 +1207,6 @@ Class Telnet
             $writer = New-Object System.IO.StreamWriter($stream)
             $buffer = New-Object System.Byte[] 1024
             $encoding = New-Object System.Text.ASCIIEncoding
-
             foreach ($command in $commands)
             {
                 $writer.WriteLine($command)
@@ -1062,7 +1293,7 @@ Class Lekerdezes
         $waittimeorig = $script:config.waittime
         do
         {
-            Write-Host "A(z) $($remote.IPaddress) IP című eszköz helyének lekérdezése folyamatban..."
+            Write-Host "`rA(z) $($remote.IPaddress) IP című eszköz helyének lekérdezése folyamatban..."
             $this.result = [Telnet]::InvokeCommands($parancs)
             if(!$this.result)
             {
@@ -1070,12 +1301,12 @@ Class Lekerdezes
                 Add-Log "[KAPCSOLÓDÁSI HIBA] $message"
                 Write-Host $message -ForegroundColor Red
             }
-            elseif ($this.result | Select-String -Pattern "Layer 2 trace completed")
+            elseif ($this.result | Select-String -Pattern "trace completed")
             {
                 Show-Debug "Az útvonal lekérése sikeres"
                 $this.sikeres = $true
             }
-            if ($this.result | Select-String -Pattern "Layer2 trace aborted")
+            if ($this.result | Select-String -Pattern "trace aborted")
             {
                 Show-Debug "Az útvonal lekérése sikertelen nem próbálkozom újra"
                 $this.sikeres = $false
@@ -1168,6 +1399,12 @@ Class Lekerdezes
             Add-Log "[ESZKÖZ ELÉRHETETLEN] $message"
             Write-Host "$message!" -ForegroundColor Red
         }
+        elseif($this.result | Select-String -Pattern "Mac address not found")
+        {
+            $message = "A(z) $($this.remote.IPaddress) eszköz ARP tábla hiba miatt nem lekérdezhető"
+            Add-Log "[ARP TÁBLA HIBA] $message"
+            Write-Host "$message!" -ForegroundColor Red
+        }
         else
         {
             Show-Debug $this.result
@@ -1216,10 +1453,12 @@ Class Import
     Static AD($ADgeplista)
     {
         $script:elemszam = $ADgeplista.Length
+        #[Eszkoz]::CreateTable($script:ounev)
         $script:eszkoz = New-Object 'object[]' $script:elemszam
         for($i = 0; $i -lt $script:elemszam; $i++)
         {
             $script:eszkoz[$i] = [Eszkoz]::New($ADgeplista[$i].Name)
+            #$script:eszkoz[$i].InsertIntoSQL($script:ounev)
             # A geplista-OUnev-OLD csv fájlba azonnal kitett gép objektumokkal biztosíthatjuk, hogy ha az első ellenőrzés során a program le is állna,
             # a következő futáskor ne terheljük az AD-t a gépek újboli lekérdezésével.
             $script:eszkoz[$i] | export-csv -encoding UTF8 -path $script:oldcsv -NoTypeInformation -Append -Force -Delimiter ";"
@@ -1279,7 +1518,7 @@ function Get-Valasztas
     #Write-Host $choice #For debug purposes
     do
     {        
-        if ($probalkozottmar -eq $false) # Here the user enters their choice, if it's their first try
+        if (!$probalkozottmar) # Here the user enters their choice, if it's their first try
         {
             $valasztas = Read-Host -Prompt "Válassz"
         }
@@ -1327,12 +1566,12 @@ function Show-Cimsor
 {
     param($almenu)
     Clear-Host
-    Write-Host "HÁLÓZATKEZELÉSI SVÁJCIBICSKA`n`n$almenu`n`n"
+    Write-Host "HÁLÓZATKEZELÉSI ESZKÖZTÁR`n`n$almenu`n`n"
 }
 
 function Clear-Line
 {
-    Write-Host "`r                                                                                           "    
+    Write-Host "`r                                                                                           " -NoNewLine
 }
 
 #####
@@ -1370,35 +1609,6 @@ function Get-UtolsoUser
     {
         return "Nincs bejelentkezett felhasználó"
     }
-}
-
-function Get-NameByIP
-{
-    param ($IPaddress)
-    try
-    {
-        $namesplit = ([System.Net.DNS]::GetHostEntry($IPaddress)).HostName
-        $kimenet = $namesplit.Split(".")
-        $name = $kimenet[0]
-    }
-    catch [System.Net.Sockets.SocketException]
-    {
-        $name = "Nem elérhető"
-    }
-
-    return $name
-}
-
-function Get-IPcount
-{
-    param ($elsoIP, $utolsoIP)
-        
-    $elsotag = $utolsoIP.tag1 - $elsoIP.tag1 + 1
-    $masodiktag = (256 - $elsoIP.tag2) + ($utolsoIP.tag2+1) + ((($elsotag - 2) * 256))
-    $harmadiktag = (256 - $elsoIP.tag3) + ($utolsoIP.tag3+1) + ((($masodiktag - 2) * 256))
-    $negyediktag = (256 - $elsoIP.tag4) + ($utolsoIP.tag4+1) + ((($harmadiktag - 2) * 256))
-
-    return $negyediktag
 }
 
 function Test-Ping
@@ -1687,83 +1897,6 @@ function Get-OU
     }
 }
 
-function Import-IPRange
-{
-    param ($elsoIP, $utolsoIP, $elsokihagyott, $utolsokihagyott)
-
-    $eszkoz = New-Object System.Collections.ArrayList($null)
-    $keszip = New-Object IPcim("1.1.1.1")
-
-    for($elsotag = $elsoIP.Tag1; $elsotag -le $utolsoIP.Tag1; $elsotag++)
-    {
-        $zaroIP2 = 255
-        if($elsotag -eq $utolsoIP.Tag1)
-        {
-            $zaroIP2 = $utolsoIP.Tag2
-        }
-        if($elsotag -eq $elsoIP.Tag1)
-        {
-            $nyitoIP2 = $elsoIP.Tag2
-        }
-        else
-        {
-            $nyitoIP2 = 0
-        }
-
-        for ($masodiktag = $nyitoIP2; $masodiktag -le $zaroIP2; $masodiktag++)
-        {
-            $zaroIP3 = 255
-            if(($masodiktag -eq $utolsoIP.Tag2) -and ($elsotag -eq $utolsoIP.Tag1))
-            {
-                $zaroIP3 = $utolsoIP.Tag3
-            }
-            if(($masodiktag -eq $elsoIP.Tag2) -and ($elsotag -eq $elsoIP.Tag1))
-            {
-                $nyitoIP3 = $elsoIP.Tag3
-            }
-            else
-            {
-                $nyitoIP3 = 0
-            }
-            
-            for ($harmadiktag = $nyitoIP3; $harmadiktag -le $zaroIP3; $harmadiktag++)
-            { 
-                $zaroIP4 = 255
-                if(($harmadiktag -eq $utolsoIP.Tag3) -and ($masodiktag -eq $utolsoIP.Tag2) -and ($elsotag -eq $utolsoIP.Tag1))
-                {
-                    $zaroIP4 = $utolsoIP.Tag4
-                }
-                if(($harmadiktag -eq $elsoIP.Tag3) -and ($masodiktag -eq $elsoIP.Tag2) -and ($elsotag -eq $elsoIP.Tag1))
-                {
-                    $nyitoIP4 = $elsoIP.Tag4
-                }
-                else
-                {
-                    $nyitoIP4 = 0
-                }
-                for ($negyediktag = $nyitoIP4; $negyediktag -le $zaroIP4; $negyediktag++)
-                {
-                    $ipstring = "$($elsotag).$($masodiktag).$($harmadiktag).$($negyediktag)"
-                    if($elsokihagyott)
-                    {
-                        $keszip.NoCheck($ipstring)
-                        if((Compare-IPs $elsokihagyott $keszip) -or (Compare-IPs $keszip $utolsokihagyott))
-                        {
-                            $eszkoz.Add([Remote]::New($ipstring, $false)) > $null
-                        }
-                    }
-                    else
-                    {
-                        $eszkoz.Add([Remote]::New($ipstring, $false)) > $null
-                    }
-                }
-            }
-        }
-    }
-
-    return $eszkoz
-}
-
 function Get-Local
 {
     param($local, $remote, $eszkoz, $i)
@@ -1826,76 +1959,35 @@ function Get-Local
     return $localtouse
 }
 
-function Compare-IPs
-{
-    param ($IP1, $IP2)
-    
-    $elsonagyobb = $false
-    if ($IP1.Tag1 -gt $IP2.Tag1)
-    {
-        $elsonagyobb = $true
-    }
-    elseif($IP1.Tag1 -eq $IP2.Tag1)
-    {
-        if($IP1.Tag2 -gt $IP2.Tag2)
-        {
-            $elsonagyobb = $true
-        }
-        elseif($IP1.Tag2 -eq $IP2.Tag2)
-        {
-            if($IP1.Tag3 -gt $IP2.Tag3)
-            {
-                $elsonagyobb = $true
-            }
-            elseif($IP1.Tag3 -eq $IP2.Tag3)
-            {
-                if($IP1.Tag4 -gt $IP2.Tag4)
-                {
-                    $elsonagyobb = $true
-                }
-            }
-        }
-    }
-
-    return $elsonagyobb 
-}
-
 function Import-IPaddresses
 {
     do
     {
         $endloop = $true
         Show-Cimsor "IP TARTOMÁNY ELLENŐRZŐ"
-        if ($debug -ne 1)
+
+        Write-Host "Kérlek add meg a lekérdezni kívánt IP tartomány első IP címét!"
+        $script:elsoIP = New-Object IPcim(Read-Host -Prompt "Első IP cím")
+        Write-Host "Kérlek add meg a lekérdezni kívánt IP tartomány utolsó IP címét!"
+        $script:utolsoIP = New-Object IPcim(Read-Host -Prompt "Utolsó IP cím")
+        Write-Host "Szeretnél kihagyni egy megadott tartományt a két IP cím között?`nAdd meg a kihagyni kívánt tartomány első IP címét, ha igen, üss Entert, ha nem!"
+        $valassz = Read-Host -Prompt "Válassz"
+        if($valassz -and ($valassz -match $script:config.IPpattern))
         {
-            Write-Host "Kérlek add meg a lekérdezni kívánt IP tartomány első IP címét!"
-            $script:elsoIP = New-Object IPcim(Read-Host -Prompt "Első IP cím")
-            Write-Host "Kérlek add meg a lekérdezni kívánt IP tartomány utolsó IP címét!"
-            $script:utolsoIP = New-Object IPcim(Read-Host -Prompt "Utolsó IP cím")
-            Write-Host "Szeretnél kihagyni egy megadott tartományt a két IP cím között?`nAdd meg a kihagyni kívánt tartomány első IP címét, ha igen, üss Entert, ha nem!"
-            $valassz = Read-Host -Prompt "Válassz"
-            if($valassz -and ($valassz -match $script:config.IPpattern))
-            {
-                $script:elsokihagyott = New-Object IPcim($valassz)
-                Write-Host "Kérlek add meg az utolsó kihagyni kívánt IP címet!"
-                $script:utolsokihagyott = New-Object IPcim(Read-Host -Prompt "Utolsó kihagyott IP cím")
-            }
-            else
-            {
-                $script:elsokihagyott = $false
-            }
+            $elsokihagyott = New-Object IPcim($valassz)
+            Write-Host "Kérlek add meg az utolsó kihagyni kívánt IP címet!"
+            $utolsokihagyott = New-Object IPcim(Read-Host -Prompt "Utolsó kihagyott IP cím")
         }
         else
         {
-            $elsoIP = New-Object IPcim $debugip1
-            $utolsoIP = New-Object IPcim $debugip2
+            $elsokihagyott = $false
         }
-
-        $script:ipdarab = Get-IPcount $elsoIP $utolsoIP
-        if($script:elsokihagyott)
+        
+        $ipdarab = $elsoIP.Count($utolsoIP)
+        if($elsokihagyott)
         {
-            $kihagy = Get-IPcount $script:elsokihagyott $script:utolsokihagyott
-            $script:ipdarab = $script:ipdarab - $kihagy
+            $kihagy = $elsokihagyott.Count($utolsokihagyott)
+            $ipdarab = $ipdarab - $kihagy
         }
 
         if ($elsoIP.ToString() -eq $utolsoIP.ToString())
@@ -1910,7 +2002,7 @@ function Import-IPaddresses
             Read-Host
             $endloop = $false
         }
-        elseif(($ipdarab -gt 254) -and ($debug -ne 1))
+        elseif($ipdarab -gt 254)
         {
             Write-Host "A megadott tartományban $ipdarab darab IP cím található. Egészen biztos vagy benne, hogy ennyi eszközt szeretnél egyszerre lekérdezni?`nAz összes cím lekérdezése hosszú időt vehet igénybe!" -ForegroundColor Yellow
             Write-Host "Amennyiben mégis szeretnéd a lekérdezést futtatni, üss I betűt, amennyiben más tartományt adnál meg, üss N betűt!"
@@ -1923,7 +2015,7 @@ function Import-IPaddresses
         }
         elseif($elsokihagyott)
         {
-            if ((Compare-IPs $elsoIP $elsokihagyott) -or (Compare-IPs $utolsokihagyott $utolsoIP))
+            if ($elsoIP.BiggerThan($elsokihagyott) -or $utolsokihagyott.BiggerThan($utolsoIP) -or $elsokihagyott.BiggerThan($utolsokihagyott))
             {
                 Write-Host "A megadott tartományban nincs egyetlen IP cím sem! Így a lekérdezés nem folytatható le!`nEgy billentyű leütését követően kérlek add meg újra a lekérdezni kívánt tartományt!" -ForegroundColor Red
                 Read-Host
@@ -1931,13 +2023,14 @@ function Import-IPaddresses
             }
         }
     }while(!$endloop)
-    if($script:elsokihagyott)
+
+    if($elsokihagyott)
     {
-        $eszkozok = Import-IPRange $elsoIP $utolsoIP $script:elsokihagyott $script:utolsokihagyott
+        $eszkozok = $elsoIP.RangeKihagyassal($utolsoIP, $elsokihagyott, $utolsokihagyott)
     }
     else
     {
-        $eszkozok = Import-IPRange $elsoIP $utolsoIP
+        $eszkozok = $elsoIP.Range($utolsoIP)
     }
 
     return $eszkozok
@@ -2170,6 +2263,7 @@ function Get-IPrangeDevicesLocation
     $config.csvnevelotag = "EszközHely"
     $local = [Local]::New()
     $ipcim = Import-IPaddresses
+    $ipdarab = $ipcim.Length
     $config.csvnevelotag = "IP_TartományEszközei"
     Test-CSV "$($elsoIP.ToString())-$($utolsoIP.ToString())"
     Show-Cimsor "A(Z) $($elsoIP.ToString()) - $($utolsoIP.ToString()) IP TARTOMÁNY ESZKÖZEI HELYÉNEK LEKÉRDEZÉSE"
@@ -2179,13 +2273,12 @@ function Get-IPrangeDevicesLocation
     # Itt kezdődik a függvény munkaciklusa. Ezen belül történik a lekérdezést végző függvény meghívása
     # és az adatok CSV fájlból való beolvasása (utóbbi akkor is, ha eleve CSV-ből vesszük az adatokat,
     # és akkor is, ha a program a saját maga által, egy korábbi ciklusban készített fájlokat használja)
-
-    $eszkoz = New-Object 'object[]' $script:ipdarab
-    for ($i = 0; $i -lt $script:ipdarab; $i++)
+    $eszkoz = New-Object System.Collections.ArrayList($null)
+    for ($i = 0; $i -lt $ipdarab; $i++)
     {
         $sorszam = $i + 1
-        $eszkoz[$i] = [Eszkoz]::New($ipcim[$i].IPaddress)
-        Write-Host "A(z) $($eszkoz[$i].IPaddress) eszköz lekérdezése folyamatban.($sorszam/$script:ipdarab)" -NoNewline
+        $eszkoz.Add([Eszkoz]::New($ipcim[$i]))
+        Write-Host "A(z) $($eszkoz[$i].IPaddress) eszköz lekérdezése folyamatban.($sorszam/$ipdarab)" -NoNewline
 
         if ($eszkoz[$i].IPaddress -eq $local.IPaddress)
         {
@@ -2213,13 +2306,6 @@ function Get-IPrangeDevicesLocation
                 }
             }
         }
-        else
-        {
-            $message = "A(z) $($eszkoz[$i].IPaddress) Eszköz nem érhető el"
-            Add-Log "[ESZKÖZ OFFLINE] $message"
-            Clear-Line
-            Write-Host "`r$message!" -ForegroundColor Red
-        }
     }
 
     $message = "A(z) $($elsoIP.ToString()) - $($utolsoIP.ToString()) IP tartomány eszközei helyének lekérdezése sikeresen befejeződött:"
@@ -2242,23 +2328,19 @@ function Get-ADcomputersState
 
     foreach ($gep in $ADgeplista)
     {
-        $eszkoz = [Remote]::New($gep.Name, $false)
-        Write-Host "$($eszkoz.Eszkoznev) kapcsolatának ellenőrzése ($jelenelem/$($ADgeplista.Length))" -NoNewline
-        switch ($method)
+        $pingdev = [PingDevice]::New($gep.Name)
+        Write-Host "$($pingdev.EszközNév) kapcsolatának ellenőrzése ($jelenelem/$($ADgeplista.Length))" -NoNewline
+        if($pingdev.Online($pingdev.EszközNév))
         {
-            1 { $online = Test-Ping $eszkoz.Eszkoznev }
-            2 { $online = (Test-Connection $eszkoz.Eszkoznev -Quiet -Count 1) }
-            Default{ $online = Test-Ping $eszkoz.Eszkoznev }
+            $pingdev.IpByName()
         }
 
-        $eszkoz.Online = $online
-        $eszkoz.Online = $eszkoz.EszkozAllapot()
         $jelenelem++
-        $message = "$($eszkoz.Eszkoznev): Állapota: $($eszkoz.Online)"
+        $message = "$($pingdev.Eszköznév): Állapota: $($pingdev.Állapot)"
         Clear-Line
         Write-Host "`r$message"
         Add-Log "[ESZKÖZ ÁLLAPOT] $message Idő:"
-        Out-PingResult $eszkoz
+        $pingdev.OutCSV()
     }
     Write-Host "A(z) $($script:ounev) OU gépeinek lekérdezése befejeződött. Egy billentyű leütésével visszatérhetsz a főmenübe"
     Read-Host
@@ -2278,30 +2360,19 @@ function Get-IPaddressesState
 
     foreach ($eszkoz in $eszkozok)
     {
-        Write-Host "A(z) $($eszkoz.IPaddress) kapcsolatának ellenőrzése ($jelenelem/$($eszkozok.Length))" -NoNewline
-        switch ($method)
+        $pingdev = [PingDevice]::New($eszkoz)
+        Write-Host "A(z) $($eszkoz) kapcsolatának ellenőrzése ($jelenelem/$($eszkozok.Length))" -NoNewline
+        if($pingdev.Online($eszkoz))
         {
-            1 { $online = Test-Ping $eszkoz.IPaddress }
-            2 { $online = (Test-Connection $eszkoz.IPaddress -Quiet -Count 1) }
-            Default{ $online = Test-Ping $eszkoz.IPaddress }
+            $pingdev.NameByIP()
         }
 
-        $eszkoz.Online = $online
-        $name = ""
-        $neve = ""
-        if($online -and $config.nevgyujtes)
-        {
-            $name = Get-NameByIP $eszkoz.IPaddress
-            $neve = "; Neve: $name"
-            $eszkoz.Eszkoznev = $name
-        }
-
-        $eszkoz.Online = $eszkoz.EszkozAllapot()
         $jelenelem++
+        $message = "`r$($eszkoz): Állapota: $($pingdev.Állapot)$($pingdev.Nevkiir())"
         Clear-Line
-        Write-Host "`r$($eszkoz.IPaddress): Állapota: $($eszkoz.Online)$neve"
-        Add-Log "[ESZKÖZ ÁLLAPOT] $($eszkoz.IPaddress): Állapota: $($eszkoz.Online)$neve Idő:"
-        Out-PingResult $eszkoz
+        Write-Host "`r$message"
+        Add-Log "[ESZKÖZ ÁLLAPOT] $message Idő:"
+        $pingdev.OutCSV()
     }
     Write-Host "A(z) $($elsoIP.ToString()) - $($utolsoIP.ToString()) IP tartomány lekérdezése befejeződött. Egy billentyű leütésével visszatérhetsz a főmenübe"
     Read-Host
@@ -2316,7 +2387,7 @@ $script:sql = [SQL]::New()
 
 for(;;)
 {
-    Write-Host "HÁLÓZATKEZELÉSI SVÁJCIBICSKA`n"
+    Write-Host "HÁLÓZATKEZELÉSI ESZKÖZTÁR`n"
     Write-Host "Válassz az alábbi menüpontok közül:"
     Write-Host "(1) Egy eszköz helyének megkeresése a hálózaton"
     Write-Host "(2) Egy eszköz helyének megkereséséhez szükséges parancs vágólapra másolása"
